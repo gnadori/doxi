@@ -577,7 +577,7 @@ app.post('/api/room/:roomId/more-questions', async (c) => {
   }
 });
 
-// Active question lookup endpoint (returns array of all active approved questions for multi-question support)
+// Active question lookup endpoint
 app.get('/api/room/:roomId/active-question', async (c) => {
   const roomId = c.req.param('roomId');
   try {
@@ -599,6 +599,81 @@ app.get('/api/room/:roomId/active-question', async (c) => {
     return c.json({ activeQuestions: [], activeQuestion: null });
   } catch (err: any) {
     return c.json({ activeQuestions: [], activeQuestion: null });
+  }
+});
+
+// REST Endpoint for 100% reliable student answer submission
+app.post('/api/room/:roomId/submit-answer', async (c) => {
+  try {
+    const roomId = c.req.param('roomId');
+    const body = await c.req.json();
+    const { questionId, choiceIndex, studentId } = body;
+
+    if (!roomId || !questionId || choiceIndex === undefined || !studentId) {
+      return c.json({ error: 'Missing parameters' }, 400);
+    }
+
+    const kvKey = `responses:${roomId}:${questionId}`;
+    let responseData: { responses: Array<{ studentId: string; chosenIndex: number; timestamp: number }> } = {
+      responses: [],
+    };
+
+    try {
+      const rawResponses = await c.env.LECTURE_KV.get(kvKey);
+      if (rawResponses) {
+        responseData = JSON.parse(rawResponses);
+      }
+    } catch (e) {}
+
+    const existingIdx = responseData.responses.findIndex((r) => r.studentId === studentId);
+    if (existingIdx >= 0) {
+      responseData.responses[existingIdx] = {
+        studentId,
+        chosenIndex: choiceIndex,
+        timestamp: Date.now(),
+      };
+    } else {
+      responseData.responses.push({
+        studentId,
+        chosenIndex: choiceIndex,
+        timestamp: Date.now(),
+      });
+    }
+
+    try {
+      await c.env.LECTURE_KV.put(kvKey, JSON.stringify(responseData), { expirationTtl: 86400 });
+    } catch (e) {}
+
+    const counts = [0, 0, 0, 0];
+    responseData.responses.forEach((r) => {
+      if (r.chosenIndex >= 0 && r.chosenIndex < 4) {
+        counts[r.chosenIndex]++;
+      }
+    });
+
+    broadcastToRoom(
+      roomId,
+      {
+        event: 'SUBMIT_ANSWER',
+        questionId,
+        choiceIndex,
+        studentId,
+        totalSubmissions: responseData.responses.length,
+        counts,
+        responses: responseData.responses,
+      },
+      'teacher'
+    );
+
+    return c.json({
+      success: true,
+      questionId,
+      totalSubmissions: responseData.responses.length,
+      counts
+    });
+
+  } catch (err: any) {
+    return c.json({ error: 'Failed to submit answer', details: err.message }, 500);
   }
 });
 
