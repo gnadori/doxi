@@ -60,26 +60,18 @@ function sanitizeOptionText(text: string): string {
     .trim();
 }
 
-// Helper to clean speech-to-text transcript (Phonetic & Typos correction)
+// Helper to clean speech-to-text transcript for ANY academic discipline (Universal Domain-Agnostic Cleaner)
 async function cleanTranscriptWithAI(ai: any, rawTranscript: string): Promise<string> {
-  const CLEANUP_PROMPT = `You are a Hungarian biology professor and textbook editor. You receive a raw speech-to-text transcript recorded during a biology lecture containing severe recognition typos and phonetically distorted words.
+  const CLEANUP_PROMPT = `You are a universal Hungarian academic editor and speech-to-text proofreader. You analyze lecture audio transcripts across ALL academic subjects (History, Physics, Literature, Chemistry, Law, Biology, Economics, IT, Mathematics, Geography, Philosophy, Art History, etc.).
 
 YOUR TASK:
-Rewrite and reconstruct this noisy speech transcript into 2 to 4 clear, fluent, grammatically perfect Hungarian biology lecture sentences.
+Reconstruct and clean the raw speech-to-text transcript into clear, fluent, grammatically perfect Hungarian lecture sentences.
 
-CORRECTION DICTIONARY:
-- "mohán" / "mohány" / "tapanyavolt" -> "tápanyag"
-- "pethez" / "petel" -> "petesejt"
-- "megtelmekezés" -> "megtermékenyítés"
-- "igó" / "ópeteselt" -> "zigóta (megtermékenyített petesejt)"
-- "hűlő" -> "hüllő"
-- "emblős" -> "emlős"
-- "mészből felépülő burkolat ... helyi" -> "mészből felépülő burkolat, köznyelvi nevén a tojáshéj"
-- "szikártja" -> "szik (tojássárgája)"
-- "empióra" -> "embrió"
-- "hőmérségleti" -> "hőmérsékleti"
-
-Output ONLY the clean, professional Hungarian biology lecture text without quotes or markdown.`;
+RULES:
+1. Fix misheard speech typos, phonetic distortions, and broken word fragments using context across any subject.
+2. Restore proper Hungarian grammar, punctuation, and correct subject-matter terminology for any discipline.
+3. Preserve all factual concepts and academic meaning intact.
+4. Output ONLY the clean, professional Hungarian lecture text without quotes or markdown.`;
 
   const models = [
     '@cf/qwen/qwen1.5-14b-chat',
@@ -109,38 +101,27 @@ Output ONLY the clean, professional Hungarian biology lecture text without quote
   return rawTranscript;
 }
 
-// Helper to generate high-quality multiple choice questions in Hungarian
+// Helper to generate universal high-quality multiple choice questions in Hungarian for ANY subject
 async function generate5QuestionsWithAI(ai: any, cleanTranscript: string): Promise<any[]> {
-  const QUIZ_GEN_PROMPT = `You are a Hungarian biology and science professor creating university-level multiple-choice exam questions.
+  const QUIZ_GEN_PROMPT = `You are a universal academic exam question designer. Analyze the lecture transcript across ANY discipline (History, Literature, Physics, Biology, Law, IT, Economics, Chemistry, Mathematics, Geography, etc.) and generate 3 to 5 distinct multiple-choice questions.
 
 STRICT INSTRUCTIONS:
-1. Analyze the transcript and generate 3 to 5 distinct multiple-choice questions IN NATURAL, GRAMMATICALLY PERFECT HUNGARIAN.
-2. Each question text MUST be a real question ending with "?". DO NOT repeat the transcript verbatim as the question!
+1. Write 3 to 5 high-quality, professional questions IN NATURAL, GRAMMATICALLY PERFECT HUNGARIAN.
+2. Each question text MUST be a real question ending with "?". DO NOT copy the transcript verbatim as the question.
 3. Provide 4 distinct options per question (1 correct answer matching the facts, 3 realistic distractors). DO NOT include any labels like "Helyes válasz", "Tévesztő", or "A:".
 4. Respond ONLY with a valid JSON object matching this exact structure:
 {
   "questions": [
     {
-      "text": "Miből épül fel a gerincesek tojásának külső védőburkolata (tojáshéj)?",
+      "text": "Mi az elhangzott előadásrészlet tézisének lényege?",
       "options": [
-        "Mészből",
-        "Kitinből",
-        "Fehérjehártyából",
-        "Kovavázból"
+        "A helyes megállapítás",
+        "Eltérő elméleti megközelítés",
+        "Ellentmondásos feltételezés",
+        "Egyik sem a fentiek közül"
       ],
       "correctIndex": 0,
-      "explanation": "A gerincesek tojását mészből felépülő burkolat (tojáshéj) veszi körül."
-    },
-    {
-      "text": "Mi a szik (tojássárgája) és a fehérje fő biológiai funkciója?",
-      "options": [
-        "Tápanyagot és védelmet biztosít az embrió fejlődéséhez",
-        "Megakadályozza a tojás kiszáradását",
-        "A felesleges gázok kibocsátását segíti",
-        "A tojáshéj megkeményítéséért felelős"
-      ],
-      "correctIndex": 0,
-      "explanation": "A tojás sárgája és fehérjéje a tarttartalék tápanyagot biztosítja az embriónak."
+      "explanation": "Rövid szakmai magyarázat a leirat alapján."
     }
   ]
 }`;
@@ -211,18 +192,19 @@ STRICT INSTRUCTIONS:
     }
   }
 
-  // Fallback if parsing produced no questions
+  // Universal Fallback if parsing produced no questions
   if (questions.length === 0 && cleanTranscript.length > 5) {
+    const firstSentence = cleanTranscript.split('.')[0] || cleanTranscript;
     questions.push({
-      text: "Milyen fő biológiai funkciót tölt be a tojás védőburkolata és a benne található tápanyag?",
+      text: `Mire utal az előadásban elhangzott alábbi szakmai megállapítás: "${firstSentence.substring(0, 55)}..."?`,
       options: [
-        "Biztosítja az embrió fejlődését, táplálását és védelmét",
-        "Csupán az állat mozgását segíti a vízi környezetben",
-        "Szabályozza a külvilág gázcseréjét tápanyagok nélkül",
+        firstSentence.substring(0, 45),
+        "Általános igazgatási közleményekre",
+        "Jogszabályi és elméleti keretekre",
         "Egyik sem a fentiek közül"
       ],
       correctIndex: 0,
-      explanation: "A tojás védőburkolatai és tápanyagai a fejlődő embrió védelmét és táplálását szolgálják."
+      explanation: "Közvetlenül az elhangzott előadásrészletből származik."
     });
   }
 
@@ -300,7 +282,7 @@ app.post('/api/room/:roomId/audio', async (c) => {
       }, 400);
     }
 
-    // Step 1: Clean transcript with AI (Phonetic & Typos correction)
+    // Step 1: Clean transcript with AI across any academic subject
     const cleanTranscript = await cleanTranscriptWithAI(c.env.AI, rawTranscript);
 
     // Save active clean transcript to KV for "Generate More" feature
