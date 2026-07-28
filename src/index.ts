@@ -43,246 +43,270 @@ function broadcastToRoom(
 
 const app = new Hono<{ Bindings: Env }>();
 
+// Global Error Handler
+app.onError((err, c) => {
+  console.error('Hono Error Handler caught:', err);
+  return c.json({ error: 'Server Error', details: err.message || String(err) }, 500);
+});
+
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: Date.now() }));
 
-// Helper to generate a smart fallback question from transcript text if LLM models fail
+// Smart Fallback Question Generator
 function generateFallbackQuestion(transcript: string) {
-  const snippet = transcript.trim().substring(0, 60);
+  const cleanTranscript = transcript.trim();
+  const words = cleanTranscript.split(/\s+/);
+  const keyConcept = words.slice(0, 8).join(' ');
+
   const isHu = /[áéíóöőúüű]/i.test(transcript);
   
   if (isHu) {
     return [
       {
-        text: `Ellenőrző kérdés: Az elhangzott előadásrészlet alapján ("${snippet}..."), melyik állítás helyes?`,
+        text: `Mire vonatkozik az alábbi előadásrészlet: "${keyConcept}..."?`,
         options: [
-          `Az előadás a következőt tárgyalja: ${snippet}`,
-          `A témának nincs köze a megadott tényhez`,
-          `Nem hangzott el érdemi információ a szakaszban`,
-          `Egyik sem a fentiek közül`
+          `Előadási főtéma: ${keyConcept}`,
+          "Környezetvédelmi szabályozás",
+          "Általános igazgatási közlemények",
+          "Történelmi események időrendje"
         ],
         correctIndex: 0,
-        explanation: `Közvetlenül az elhangzott előadásrészletből származik.`
+        explanation: `Az előadás közvetlenül a megadott témát tárgyalja.`
       }
     ];
   }
 
   return [
     {
-      text: `Comprehension Check: Based on the lecture segment ("${snippet}..."), which statement is correct?`,
+      text: `Which core topic is discussed in the snippet: "${keyConcept}..."?`,
       options: [
-        `The lecture discusses: ${snippet}`,
-        `The topic is unrelated to ${snippet}`,
-        `No scientific principles were mentioned in this section`,
-        `None of the above`
+        keyConcept,
+        "General administrative announcements",
+        "Historical timelines",
+        "Unrelated scientific theory"
       ],
       correctIndex: 0,
-      explanation: `Derived directly from the recorded lecture segment.`
+      explanation: `Extracted directly from the lecture segment.`
     }
   ];
 }
 
 // 1. Audio Ingestion & Quiz Generation Endpoint
 app.post('/api/room/:roomId/audio', async (c) => {
-  const roomId = c.req.param('roomId');
-  if (!roomId) {
-    return c.json({ error: 'Room ID is required' }, 400);
-  }
+  try {
+    const roomId = c.req.param('roomId');
+    if (!roomId) {
+      return c.json({ error: 'Room ID is required' }, 400);
+    }
 
-  let audioBuffer: ArrayBuffer | null = null;
-  let textSample: string | null = null;
+    let audioBuffer: ArrayBuffer | null = null;
+    let textSample: string | null = null;
 
-  const contentType = c.req.header('content-type') || '';
-  if (contentType.includes('multipart/form-data')) {
-    const body = await c.req.parseBody();
-    const file = body['audio'];
-    if (file && typeof (file as any).arrayBuffer === 'function') {
-      audioBuffer = await (file as any).arrayBuffer();
-    } else if (file && file instanceof Blob) {
-      audioBuffer = await file.arrayBuffer();
-    } else if (typeof file === 'string') {
-      if (file.startsWith('data:')) {
-        const base64Data = file.split(',')[1] || '';
-        const binaryStr = atob(base64Data);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-          bytes[i] = binaryStr.charCodeAt(i);
+    const contentType = c.req.header('content-type') || '';
+    if (contentType.includes('multipart/form-data')) {
+      const body = await c.req.parseBody();
+      const file = body['audio'];
+      if (file && typeof (file as any).arrayBuffer === 'function') {
+        audioBuffer = await (file as any).arrayBuffer();
+      } else if (file && file instanceof Blob) {
+        audioBuffer = await file.arrayBuffer();
+      }
+      if (typeof body['text'] === 'string') {
+        textSample = body['text'];
+      }
+    } else {
+      audioBuffer = await c.req.arrayBuffer();
+    }
+
+    let transcript = '';
+
+    if (textSample) {
+      transcript = textSample;
+    } else if (audioBuffer && audioBuffer.byteLength > 0) {
+      const uint8Array = new Uint8Array(audioBuffer);
+      const numberArray = Array.from(uint8Array);
+
+      const whisperModels = [
+        '@cf/openai/whisper-large-v3-turbo',
+        '@cf/openai/whisper'
+      ];
+
+      let whisperErr = '';
+      for (const model of whisperModels) {
+        try {
+          const whisperRes = await c.env.AI.run(model, {
+            audio: numberArray,
+          });
+          transcript = whisperRes?.text || whisperRes?.transcript || '';
+          if (transcript) break;
+        } catch (err: any) {
+          console.error(`Whisper error with model ${model}:`, err);
+          whisperErr = err.message || String(err);
         }
-        audioBuffer = bytes.buffer;
       }
-    }
-    if (typeof body['text'] === 'string') {
-      textSample = body['text'];
-    }
-  } else {
-    audioBuffer = await c.req.arrayBuffer();
-  }
 
-  let transcript = '';
-
-  if (textSample) {
-    transcript = textSample;
-  } else if (audioBuffer && audioBuffer.byteLength > 0) {
-    const uint8Array = new Uint8Array(audioBuffer);
-    const numberArray = Array.from(uint8Array);
-
-    const whisperModels = [
-      '@cf/openai/whisper-large-v3-turbo',
-      '@cf/openai/whisper'
-    ];
-
-    let whisperErr = '';
-    for (const model of whisperModels) {
-      try {
-        const whisperRes = await c.env.AI.run(model, {
-          audio: numberArray,
-        });
-        transcript = whisperRes?.text || whisperRes?.transcript || '';
-        if (transcript) break;
-      } catch (err: any) {
-        console.error(`Whisper error with model ${model}:`, err);
-        whisperErr = err.message || String(err);
+      if (!transcript && whisperErr) {
+        return c.json({ error: 'Failed to transcribe audio with Whisper AI', details: whisperErr }, 500);
       }
+    } else {
+      return c.json({ error: 'No audio or text content provided' }, 400);
     }
 
-    if (!transcript && whisperErr) {
-      return c.json({ error: 'Failed to transcribe audio with Whisper AI', details: whisperErr }, 500);
+    if (!transcript.trim()) {
+      return c.json({ error: 'Empty transcript received' }, 400);
     }
-  } else {
-    return c.json({ error: 'No audio or text content provided' }, 400);
-  }
 
-  if (!transcript.trim()) {
-    return c.json({ error: 'Empty transcript received' }, 400);
-  }
+    const SYSTEM_PROMPT = `You are a high-level educational AI. Generate 1 multiple-choice test question based on the lecture transcript.
 
-  const SYSTEM_PROMPT = `You are an expert pedagogical assistant. Analyze the provided transcript chunk from a lecture and generate 1 or 2 multiple-choice comprehension check questions.
-
-CRITICAL INSTRUCTIONS:
-- You MUST generate questions, options, and explanations IN THE EXACT SAME LANGUAGE AS THE TRANSCRIPT (e.g., if the transcript is in Hungarian, the text, all 4 options, and explanation MUST BE FULLY IN HUNGARIAN).
-- You MUST generate 4 distinct, plausible answer choices derived directly from the lecture transcript for each question (1 correct answer and 3 realistic distractors).
-- NEVER use generic placeholder strings like "Option A", "Option B", "Option C", "Option D". Always write real, informative answer choices!
-- Respond ONLY with a valid JSON object matching this exact structure:
+RULES:
+1. Write a clear, concise question asking about a key fact in the transcript. DO NOT copy the transcript verbatim as the question.
+2. Provide 4 distinct options (1 correct answer matching the transcript, 3 realistic wrong choices).
+3. Output ONLY a raw JSON object (NO markdown blocks, NO preamble):
 {
   "questions": [
     {
-      "text": "Mi a mitokondrium elsődleges feladata a sejtekben?",
-      "options": [
-        "A DNS szintetizálása",
-        "ATP energia termelése sejtlégzéssel",
-        "Kalciumionok tárolása",
-        "Fehérjék szállítása a Golgi-készülékhez"
-      ],
-      "correctIndex": 1,
-      "explanation": "A mitokondriumok állítják elő az ATP-t, ami a sejtek energiapénze."
+      "text": "Milyen anyag keletkezik a fotoszintézis során?",
+      "options": ["Glükóz és oxigén", "Szén-monoxid", "Sók és ásványi anyagok", "Nitrogéngáz"],
+      "correctIndex": 0,
+      "explanation": "A fotoszintézis során a növények glükózt és oxigént állítanak elő."
     }
   ]
 }`;
 
-  const modelsToTry = [
-    '@cf/meta/llama-3.3-70b-instruct',
-    '@cf/meta/llama-3-8b-instruct',
-    '@cf/mistral/mistral-7b-instruct-v0.1',
-    '@cf/qwen/qwen1.5-7b-chat'
-  ];
+    const modelsToTry = [
+      '@cf/meta/llama-3.2-3b-instruct',
+      '@cf/meta/llama-3.2-1b-instruct',
+      '@cf/mistral/mistral-7b-instruct-v0.2',
+      '@cf/qwen/qwen1.5-7b-chat'
+    ];
 
-  let llmRes: any = null;
+    let llmRes: any = null;
+    let modelUsed = '';
+    let errorLogs: string[] = [];
 
-  for (const model of modelsToTry) {
-    try {
-      llmRes = await c.env.AI.run(model, {
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: `Lecture transcript:\n"${transcript}"` },
-        ],
-      });
-      if (llmRes && (llmRes.response || typeof llmRes === 'string')) {
-        break;
-      }
-    } catch (err: any) {
-      console.error(`Workers AI error with model ${model}:`, err);
-    }
-  }
-
-  let generatedQuestions: any[] = [];
-
-  if (llmRes) {
-    let rawText = typeof llmRes === 'string' ? llmRes : llmRes.response || JSON.stringify(llmRes);
-    try {
-      const parsed = JSON.parse(rawText);
-      if (Array.isArray(parsed.questions)) {
-        generatedQuestions = parsed.questions;
-      } else if (parsed.text && parsed.options) {
-        generatedQuestions = [parsed];
-      }
-    } catch (parseErr) {
-      const match = rawText.match(/\{[\s\S]*\}/);
-      if (match) {
-        try {
-          const parsed = JSON.parse(match[0]);
-          generatedQuestions = parsed.questions || [parsed];
-        } catch (e) {}
-      }
-    }
-  }
-
-  // Fallback to safe question generator if AI LLM fails or is unavailable
-  if (!generatedQuestions || generatedQuestions.length === 0) {
-    generatedQuestions = generateFallbackQuestion(transcript);
-  }
-
-  const savedQuestions = [];
-  const now = Date.now();
-
-  for (const q of generatedQuestions) {
-    const questionId = `q_${now}_${Math.random().toString(36).substring(2, 7)}`;
-    const questionObj = {
-      id: questionId,
-      text: q.text || 'Sample comprehension check?',
-      options: Array.isArray(q.options) && q.options.length === 4 && !q.options.some((o: string) => /^option [a-d]$/i.test(o.trim()))
-        ? q.options 
-        : [
-            q.options?.[0] || 'First key statement from lecture',
-            q.options?.[1] || 'Alternative hypothesis',
-            q.options?.[2] || 'Contrary scientific opinion',
-            q.options?.[3] || 'None of the above'
+    for (const model of modelsToTry) {
+      try {
+        llmRes = await c.env.AI.run(model, {
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: `Transcript:\n"${transcript}"` },
           ],
-      correctIndex: typeof q.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex < 4 ? q.correctIndex : 0,
-      explanation: q.explanation || 'Based on lecture content.',
-      approved: false,
-      timestamp: now,
-    };
-
-    // Save to Workers KV (24-hour TTL = 86400s)
-    try {
-      await c.env.LECTURE_KV.put(
-        `questions:${roomId}:${questionId}`,
-        JSON.stringify(questionObj),
-        { expirationTtl: 86400 }
-      );
-    } catch (kvErr) {
-      console.error('KV Save Error:', kvErr);
+        });
+        if (llmRes && (llmRes.response || typeof llmRes === 'string')) {
+          modelUsed = model;
+          break;
+        }
+      } catch (err: any) {
+        console.error(`LLM error (${model}):`, err);
+        errorLogs.push(`${model}: ${err.message || String(err)}`);
+      }
     }
 
-    savedQuestions.push(questionObj);
+    let generatedQuestions: any[] = [];
+    let rawText = '';
 
-    // Broadcast NEW_QUESTION_PENDING to Teacher WebSocket
-    broadcastToRoom(
+    if (llmRes) {
+      if (typeof llmRes === 'string') {
+        rawText = llmRes;
+      } else if (llmRes && typeof llmRes.response === 'string') {
+        rawText = llmRes.response;
+      } else if (llmRes && typeof llmRes.response === 'object') {
+        rawText = JSON.stringify(llmRes.response);
+      } else {
+        rawText = JSON.stringify(llmRes);
+      }
+
+      // Strip markdown code fences if present
+      rawText = rawText.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+
+      try {
+        const parsed = JSON.parse(rawText);
+        if (Array.isArray(parsed.questions)) {
+          generatedQuestions = parsed.questions;
+        } else if (parsed.text && parsed.options) {
+          generatedQuestions = [parsed];
+        }
+      } catch (parseErr) {
+        const match = rawText.match(/\{[\s\S]*\}/);
+        if (match) {
+          try {
+            const parsed = JSON.parse(match[0]);
+            generatedQuestions = parsed.questions || [parsed];
+          } catch (e) {}
+        }
+      }
+    }
+
+    if (!generatedQuestions || generatedQuestions.length === 0) {
+      generatedQuestions = generateFallbackQuestion(transcript);
+    }
+
+    const savedQuestions = [];
+    const now = Date.now();
+
+    for (const q of generatedQuestions) {
+      const questionId = `q_${now}_${Math.random().toString(36).substring(2, 7)}`;
+      
+      // Ensure question text isn't verbatim transcript if verbatim
+      let qText = q.text || 'Megértési ellenőrző kérdés';
+      if (qText.trim() === transcript.trim()) {
+        const firstWords = transcript.trim().split(/\s+/).slice(0, 6).join(' ');
+        qText = `Mit állít az előadó a következőről: "${firstWords}..."?`;
+      }
+
+      const questionObj = {
+        id: questionId,
+        text: qText,
+        options: Array.isArray(q.options) && q.options.length === 4 ? q.options : [
+          q.options?.[0] || 'Elsődleges megállapítás',
+          q.options?.[1] || 'Alternatív elmélet',
+          q.options?.[2] || 'Eltérő állítás',
+          q.options?.[3] || 'Egyik sem'
+        ],
+        correctIndex: typeof q.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex < 4 ? q.correctIndex : 0,
+        explanation: q.explanation || 'Az elhangzottak alapján.',
+        approved: false,
+        timestamp: now,
+      };
+
+      try {
+        await c.env.LECTURE_KV.put(
+          `questions:${roomId}:${questionId}`,
+          JSON.stringify(questionObj),
+          { expirationTtl: 86400 }
+        );
+      } catch (kvErr) {
+        console.error('KV Save Error:', kvErr);
+      }
+
+      savedQuestions.push(questionObj);
+
+      broadcastToRoom(
+        roomId,
+        {
+          event: 'NEW_QUESTION_PENDING',
+          questionObject: questionObj,
+        },
+        'teacher'
+      );
+    }
+
+    return c.json({
+      success: true,
       roomId,
-      {
-        event: 'NEW_QUESTION_PENDING',
-        questionObject: questionObj,
-      },
-      'teacher'
-    );
-  }
+      transcript,
+      questions: savedQuestions,
+      debug: {
+        modelUsed,
+        rawText: rawText.substring(0, 200),
+        errorLogs
+      }
+    });
 
-  return c.json({
-    success: true,
-    roomId,
-    transcript,
-    questions: savedQuestions,
-  });
+  } catch (globalErr: any) {
+    console.error('Global Route Handler Error:', globalErr);
+    return c.json({ error: 'Endpoint processing error', details: globalErr.message || String(globalErr) }, 500);
+  }
 });
 
 // 2. WebSocket Real-time Endpoint
