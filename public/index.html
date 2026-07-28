@@ -115,12 +115,18 @@
             </div>
             
             <!-- Quick Test Trigger for instant demonstration -->
-            <div class="border-t border-slate-800/80 pt-3">
-              <label class="text-[11px] text-slate-400 block mb-1">Instant Demo Trigger (Optional Text Input)</label>
+            <div class="border-t border-slate-800/80 pt-3 space-y-2">
+              <label class="text-[11px] text-slate-400 block mb-1">Instant Demo & Hangfájl Tesztelés</label>
               <div class="flex gap-2">
-                <input type="text" id="sampleTextPrompt" placeholder="e.g. Mitochondria is the powerhouse of the cell..." class="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-brand-500 focus:outline-none text-slate-200">
+                <input type="text" id="sampleTextPrompt" placeholder="Pl.: A fotoszintézis során a növények napfény segítségével glükózt és oxigént állítanak elő..." class="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-brand-500 focus:outline-none text-slate-200">
                 <button id="sendSampleTextBtn" class="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium text-xs rounded-lg transition border border-slate-700 flex items-center gap-1">
                   <span>⚡ AI Check</span>
+                </button>
+              </div>
+              <div class="flex items-center gap-2 pt-1">
+                <input type="file" id="audioFileInput" accept="audio/*" class="hidden">
+                <button id="uploadAudioFileBtn" class="w-full py-1.5 px-3 bg-slate-900 hover:bg-slate-800 text-slate-300 font-medium text-xs rounded-lg transition border border-slate-800 flex items-center justify-center gap-1 text-brand-400 border-brand-500/20">
+                  <span>🎙️ Tesztelés Hangfájllal (.webm / .mp3 / .wav)</span>
                 </button>
               </div>
             </div>
@@ -659,7 +665,7 @@
     // Instant Sample Text Trigger
     document.getElementById('sendSampleTextBtn').addEventListener('click', async () => {
       const btn = document.getElementById('sendSampleTextBtn');
-      const text = document.getElementById('sampleTextPrompt').value.trim() || 'The mitochondria is the powerhouse of the cell, generating ATP through oxidative phosphorylation.';
+      const text = document.getElementById('sampleTextPrompt').value.trim() || 'A fotoszintézis során a növények napfény segítségével glükózt és oxigént állítanak elő szén-dioxidból és vízből.';
       
       const originalHTML = btn.innerHTML;
       btn.disabled = true;
@@ -690,6 +696,50 @@
       } finally {
         btn.disabled = false;
         btn.innerHTML = originalHTML;
+      }
+    });
+
+    // Audio File Upload for Speech-to-Text Whisper AI testing
+    document.getElementById('uploadAudioFileBtn').addEventListener('click', () => {
+      document.getElementById('audioFileInput').click();
+    });
+
+    document.getElementById('audioFileInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const btn = document.getElementById('uploadAudioFileBtn');
+      const originalHTML = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="animate-pulse">🎙️ Whisper AI beszédértékelés...</span>';
+
+      try {
+        const formData = new FormData();
+        formData.append('audio', file);
+
+        const res = await fetch(`/api/room/${encodeURIComponent(currentRoom)}/audio`, {
+          method: 'POST',
+          body: formData
+        });
+        const json = await res.json();
+        
+        if (res.ok && json.questions && json.questions.length > 0) {
+          json.questions.forEach(q => {
+            if (!pendingQuestions.some(existing => existing.id === q.id)) {
+              addQuestionToPendingQueue(q);
+            }
+          });
+          alert(`Sikeres Whisper AI beszédértékelés!\n\nFelismert szöveg: "${json.transcript}"\n\n${json.questions.length} db magyar kérdés bekerült a várólistára.`);
+        } else {
+          alert(`Beszéd-felismerési hiba: ${json.error || 'Ismeretlen hiba'} ${json.details ? '(' + json.details + ')' : ''}`);
+        }
+      } catch (err) {
+        console.error('Audio file upload failed:', err);
+        alert('Hiba történt a hangfájl elküldése során.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+        e.target.value = '';
       }
     });
 

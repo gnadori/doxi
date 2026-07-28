@@ -48,18 +48,36 @@ app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: Date.now() }));
 
 // Helper to generate a smart fallback question from transcript text if LLM models fail
 function generateFallbackQuestion(transcript: string) {
-  const snippet = transcript.trim().substring(0, 50);
+  const snippet = transcript.trim().substring(0, 60);
+  const isHu = /[áéíóöőúüű]/i.test(transcript);
+  
+  if (isHu) {
+    return [
+      {
+        text: `Ellenőrző kérdés: Az elhangzott előadásrészlet alapján ("${snippet}..."), melyik állítás helyes?`,
+        options: [
+          `Az előadás a következőt tárgyalja: ${snippet}`,
+          `A témának nincs köze a megadott tényhez`,
+          `Nem hangzott el érdemi információ a szakaszban`,
+          `Egyik sem a fentiek közül`
+        ],
+        correctIndex: 0,
+        explanation: `Közvetlenül az elhangzott előadásrészletből származik.`
+      }
+    ];
+  }
+
   return [
     {
-      text: `Based on the lecture snippet ("${snippet}..."), which of the following is correct?`,
+      text: `Comprehension Check: Based on the lecture segment ("${snippet}..."), which statement is correct?`,
       options: [
         `The lecture discusses: ${snippet}`,
-        `The concept is completely unrelated to ${snippet}`,
-        `No specific topics were covered in this section`,
-        `The statement contradicts basic principles`
+        `The topic is unrelated to ${snippet}`,
+        `No scientific principles were mentioned in this section`,
+        `None of the above`
       ],
       correctIndex: 0,
-      explanation: `Extracted directly from the lecture segment.`
+      explanation: `Derived directly from the recorded lecture segment.`
     }
   ];
 }
@@ -104,7 +122,7 @@ app.post('/api/room/:roomId/audio', async (c) => {
       transcript = whisperRes?.text || whisperRes?.transcript || '';
     } catch (err: any) {
       console.error('Whisper AI error:', err);
-      transcript = 'Lecture audio slice received.';
+      return c.json({ error: 'Failed to transcribe audio with Whisper AI', details: err.message }, 500);
     }
   } else {
     return c.json({ error: 'No audio or text content provided' }, 400);
@@ -117,21 +135,22 @@ app.post('/api/room/:roomId/audio', async (c) => {
   const SYSTEM_PROMPT = `You are an expert pedagogical assistant. Analyze the provided transcript chunk from a lecture and generate 1 or 2 multiple-choice comprehension check questions.
 
 CRITICAL INSTRUCTIONS:
+- You MUST generate questions, options, and explanations IN THE EXACT SAME LANGUAGE AS THE TRANSCRIPT (e.g., if the transcript is in Hungarian, the text, all 4 options, and explanation MUST BE FULLY IN HUNGARIAN).
 - You MUST generate 4 distinct, plausible answer choices derived directly from the lecture transcript for each question (1 correct answer and 3 realistic distractors).
 - NEVER use generic placeholder strings like "Option A", "Option B", "Option C", "Option D". Always write real, informative answer choices!
 - Respond ONLY with a valid JSON object matching this exact structure:
 {
   "questions": [
     {
-      "text": "What is the main function of mitochondria in eukaryotic cells?",
+      "text": "Mi a mitokondrium elsődleges feladata a sejtekben?",
       "options": [
-        "Synthesizing nuclear DNA",
-        "Generating ATP energy through cellular respiration",
-        "Storing calcium ions in muscles",
-        "Transporting proteins to the Golgi apparatus"
+        "A DNS szintetizálása",
+        "ATP energia termelése sejtlégzéssel",
+        "Kalciumionok tárolása",
+        "Fehérjék szállítása a Golgi-készülékhez"
       ],
       "correctIndex": 1,
-      "explanation": "Mitochondria produce ATP, which powers cellular processes."
+      "explanation": "A mitokondriumok állítják elő az ATP-t, ami a sejtek energiapénze."
     }
   ]
 }`;
