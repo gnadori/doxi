@@ -52,45 +52,6 @@ app.onError((err, c) => {
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: Date.now() }));
 
-// Smart Fallback Question Generator
-function generateFallbackQuestion(transcript: string) {
-  const cleanTranscript = transcript.trim();
-  const words = cleanTranscript.split(/\s+/);
-  const keyConcept = words.slice(0, 8).join(' ');
-
-  const isHu = /[áéíóöőúüű]/i.test(transcript);
-  
-  if (isHu) {
-    return [
-      {
-        text: `Mire vonatkozik az alábbi előadásrészlet: "${keyConcept}..."?`,
-        options: [
-          `Előadási főtéma: ${keyConcept}`,
-          "Környezetvédelmi szabályozás",
-          "Általános igazgatási közlemények",
-          "Történelmi események időrendje"
-        ],
-        correctIndex: 0,
-        explanation: `Az előadás közvetlenül a megadott témát tárgyalja.`
-      }
-    ];
-  }
-
-  return [
-    {
-      text: `Which core topic is discussed in the snippet: "${keyConcept}..."?`,
-      options: [
-        keyConcept,
-        "General administrative announcements",
-        "Historical timelines",
-        "Unrelated scientific theory"
-      ],
-      correctIndex: 0,
-      explanation: `Extracted directly from the lecture segment.`
-    }
-  ];
-}
-
 // 1. Audio Ingestion & Quiz Generation Endpoint
 app.post('/api/room/:roomId/audio', async (c) => {
   try {
@@ -146,29 +107,42 @@ app.post('/api/room/:roomId/audio', async (c) => {
       }
 
       if (!transcript && whisperErr) {
-        return c.json({ error: 'Failed to transcribe audio with Whisper AI', details: whisperErr }, 500);
+        return c.json({ error: 'Beszédleiratozási hiba a Whisper AI-nál', details: whisperErr }, 500);
       }
     } else {
-      return c.json({ error: 'No audio or text content provided' }, 400);
+      return c.json({ error: 'Nem érkezett hanganyag vagy szöveg' }, 400);
     }
 
-    if (!transcript.trim()) {
-      return c.json({ error: 'Empty transcript received' }, 400);
+    transcript = transcript.trim();
+
+    // Check for minimum meaningful transcript length
+    if (!transcript || transcript.length < 12) {
+      return c.json({
+        error: 'Túl rövid vagy nem jól érthető felvétel',
+        details: 'A rögzített hanganyag túl rövid volt. Kérlek beszélj 10-15 másodpercig az előadásról a jobb felismeréshez!',
+        transcript
+      }, 400);
     }
 
-    const SYSTEM_PROMPT = `You are a high-level educational AI. Generate 1 multiple-choice test question based on the lecture transcript.
+    const SYSTEM_PROMPT = `You are an expert educational AI assistant. You analyze lecture audio transcripts (which may contain minor speech recognition typos) and generate 1 insightful multiple-choice comprehension question in Hungarian.
 
-RULES:
-1. Write a clear, concise question asking about a key fact in the transcript. DO NOT copy the transcript verbatim as the question.
-2. Provide 4 distinct options (1 correct answer matching the transcript, 3 realistic wrong choices).
-3. Output ONLY a raw JSON object (NO markdown blocks, NO preamble):
+CRITICAL INSTRUCTIONS:
+1. Language: Output 100% in Hungarian (question, all 4 choices, and explanation).
+2. Question Quality: Formulate an intelligent, natural Hungarian question asking about the core topic or facts in the transcript. NEVER copy the raw transcript verbatim as the question. Correct any minor speech typos internally.
+3. Options: Provide 4 distinct, plausible Hungarian choices (1 correct answer matching the transcript, 3 realistic distractors). NEVER use placeholders or template text.
+4. Output ONLY valid JSON (no code blocks, no preamble):
 {
   "questions": [
     {
-      "text": "Milyen anyag keletkezik a fotoszintézis során?",
-      "options": ["Glükóz és oxigén", "Szén-monoxid", "Sók és ásványi anyagok", "Nitrogéngáz"],
+      "text": "Melyik történelmi vagy szakmai témára utal az előadásban elhangzott részlet?",
+      "options": [
+        "A korabeli hatalmi jelvényekre és szimbólumokra",
+        "A középkori kereskedelmi útvonalakra",
+        "A modern alkotmányjogi szabályozásra",
+        "A népességnyilvántartási adatokra"
+      ],
       "correctIndex": 0,
-      "explanation": "A fotoszintézis során a növények glükózt és oxigént állítanak elő."
+      "explanation": "Az előadásrészlet a korabeli hatalmi jelvényeket és szimbólumokat tárgyalja."
     }
   ]
 }`;
@@ -189,7 +163,7 @@ RULES:
         llmRes = await c.env.AI.run(model, {
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: `Transcript:\n"${transcript}"` },
+            { role: 'user', content: `Előadás leirat:\n"${transcript}"` },
           ],
         });
         if (llmRes && (llmRes.response || typeof llmRes === 'string')) {
@@ -238,7 +212,12 @@ RULES:
     }
 
     if (!generatedQuestions || generatedQuestions.length === 0) {
-      generatedQuestions = generateFallbackQuestion(transcript);
+      return c.json({
+        error: 'Nem sikerült érdemi kérdést generálni',
+        details: 'Próbáld meg kicsit hosszabban vagy tisztábban elmondani a tézist!',
+        transcript,
+        debug: { errorLogs, rawText }
+      }, 500);
     }
 
     const savedQuestions = [];
@@ -246,17 +225,10 @@ RULES:
 
     for (const q of generatedQuestions) {
       const questionId = `q_${now}_${Math.random().toString(36).substring(2, 7)}`;
-      
-      // Ensure question text isn't verbatim transcript if verbatim
-      let qText = q.text || 'Megértési ellenőrző kérdés';
-      if (qText.trim() === transcript.trim()) {
-        const firstWords = transcript.trim().split(/\s+/).slice(0, 6).join(' ');
-        qText = `Mit állít az előadó a következőről: "${firstWords}..."?`;
-      }
 
       const questionObj = {
         id: questionId,
-        text: qText,
+        text: q.text || 'Megértési ellenőrző kérdés',
         options: Array.isArray(q.options) && q.options.length === 4 ? q.options : [
           q.options?.[0] || 'Elsődleges megállapítás',
           q.options?.[1] || 'Alternatív elmélet',
