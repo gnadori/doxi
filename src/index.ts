@@ -577,23 +577,28 @@ app.post('/api/room/:roomId/more-questions', async (c) => {
   }
 });
 
-// Active question lookup endpoint
+// Active question lookup endpoint (returns array of all active approved questions for multi-question support)
 app.get('/api/room/:roomId/active-question', async (c) => {
   const roomId = c.req.param('roomId');
   try {
     const rawSession = await c.env.LECTURE_KV.get(`session:${roomId}`);
     if (rawSession) {
       const session = JSON.parse(rawSession);
-      if (session && session.status === 'active' && session.currentQuestionId) {
-        const rawQuestion = await c.env.LECTURE_KV.get(`questions:${roomId}:${session.currentQuestionId}`);
-        if (rawQuestion) {
-          return c.json({ activeQuestion: JSON.parse(rawQuestion) });
+      const questionIds: string[] = session.activeQuestionIds || (session.currentQuestionId ? [session.currentQuestionId] : []);
+      if (session.status === 'active' && questionIds.length > 0) {
+        const questionsList = [];
+        for (const qId of questionIds) {
+          const rawQuestion = await c.env.LECTURE_KV.get(`questions:${roomId}:${qId}`);
+          if (rawQuestion) {
+            questionsList.push(JSON.parse(rawQuestion));
+          }
         }
+        return c.json({ activeQuestions: questionsList, activeQuestion: questionsList[questionsList.length - 1] });
       }
     }
-    return c.json({ activeQuestion: null });
+    return c.json({ activeQuestions: [], activeQuestion: null });
   } catch (err: any) {
-    return c.json({ activeQuestion: null });
+    return c.json({ activeQuestions: [], activeQuestion: null });
   }
 });
 
@@ -622,25 +627,30 @@ app.get('/ws/room/:roomId', async (c) => {
   const roomSet = getRoomSockets(roomId);
   roomSet.add(client);
 
-  // Send active question to newly connected client immediately if one exists
+  // Send all active questions to newly connected client immediately if any exist
   try {
     const rawSession = await c.env.LECTURE_KV.get(`session:${roomId}`);
     if (rawSession) {
       const session = JSON.parse(rawSession);
-      if (session && session.status === 'active' && session.currentQuestionId) {
-        const rawQuestion = await c.env.LECTURE_KV.get(`questions:${roomId}:${session.currentQuestionId}`);
-        if (rawQuestion) {
-          const questionObj = JSON.parse(rawQuestion);
-          serverSocket.send(JSON.stringify({
-            event: 'APPROVE_QUESTION',
-            questionId: session.currentQuestionId,
-            questionObject: questionObj
-          }));
+      const questionIds: string[] = session.activeQuestionIds || (session.currentQuestionId ? [session.currentQuestionId] : []);
+      if (session.status === 'active' && questionIds.length > 0) {
+        const questionsList = [];
+        for (const qId of questionIds) {
+          const rawQuestion = await c.env.LECTURE_KV.get(`questions:${roomId}:${qId}`);
+          if (rawQuestion) {
+            questionsList.push(JSON.parse(rawQuestion));
+          }
         }
+        serverSocket.send(JSON.stringify({
+          event: 'APPROVE_QUESTION',
+          questionId: questionIds[questionIds.length - 1],
+          questionObject: questionsList[questionsList.length - 1],
+          activeQuestions: questionsList
+        }));
       }
     }
   } catch (e) {
-    console.error('Error pushing initial active question on WS connect:', e);
+    console.error('Error pushing initial active questions on WS connect:', e);
   }
 
   serverSocket.addEventListener('message', async (event) => {
@@ -670,24 +680,49 @@ app.get('/ws/room/:roomId', async (c) => {
               { expirationTtl: 86400 }
             );
 
+            let activeQuestionIds: string[] = [];
+            const rawSession = await c.env.LECTURE_KV.get(`session:${roomId}`);
+            if (rawSession) {
+              const session = JSON.parse(rawSession);
+              if (Array.isArray(session.activeQuestionIds)) {
+                activeQuestionIds = session.activeQuestionIds;
+              } else if (session.currentQuestionId) {
+                activeQuestionIds = [session.currentQuestionId];
+              }
+            }
+
+            if (!activeQuestionIds.includes(questionId)) {
+              activeQuestionIds.push(questionId);
+            }
+
             const sessionData = {
               roomId,
               createdAt: Date.now(),
               currentQuestionId: questionId,
+              activeQuestionIds,
               status: 'active',
             };
             await c.env.LECTURE_KV.put(`session:${roomId}`, JSON.stringify(sessionData), {
               expirationTtl: 86400,
             });
+
+            const questionsList = [];
+            for (const qId of activeQuestionIds) {
+              const rawQ = await c.env.LECTURE_KV.get(`questions:${roomId}:${qId}`);
+              if (rawQ) {
+                questionsList.push(JSON.parse(rawQ));
+              }
+            }
+
+            broadcastToRoom(roomId, {
+              event: 'APPROVE_QUESTION',
+              questionId,
+              questionObject: questionObj,
+              activeQuestions: questionsList
+            });
           } catch (kvErr) {
             console.error('KV update error on approve:', kvErr);
           }
-
-          broadcastToRoom(roomId, {
-            event: 'APPROVE_QUESTION',
-            questionId,
-            questionObject: questionObj,
-          });
         }
       } else if (data.event === 'SUBMIT_ANSWER') {
         const { questionId, choiceIndex, studentId } = data;
