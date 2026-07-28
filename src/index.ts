@@ -62,7 +62,24 @@ function sanitizeOptionText(text: string): string {
 
 // Helper to clean speech-to-text transcript (Phonetic & Typos correction)
 async function cleanTranscriptWithAI(ai: any, rawTranscript: string): Promise<string> {
-  const CLEANUP_PROMPT = `You are a university editor and Hungarian proofreader. Correct speech recognition typos in lecture transcripts (e.g., "borosztján" -> "borostyán", "reprodukányomagát" -> "szaporodását", "szarómaik" -> "szarmaták"). Ensure natural Hungarian syntax and correct terminology. Output ONLY the clean Hungarian text without quotes.`;
+  const CLEANUP_PROMPT = `You are a Hungarian biology professor and textbook editor. You receive a raw speech-to-text transcript recorded during a biology lecture containing severe recognition typos and phonetically distorted words.
+
+YOUR TASK:
+Rewrite and reconstruct this noisy speech transcript into 2 to 4 clear, fluent, grammatically perfect Hungarian biology lecture sentences.
+
+CORRECTION DICTIONARY:
+- "mohán" / "mohány" / "tapanyavolt" -> "tápanyag"
+- "pethez" / "petel" -> "petesejt"
+- "megtelmekezés" -> "megtermékenyítés"
+- "igó" / "ópeteselt" -> "zigóta (megtermékenyített petesejt)"
+- "hűlő" -> "hüllő"
+- "emblős" -> "emlős"
+- "mészből felépülő burkolat ... helyi" -> "mészből felépülő burkolat, köznyelvi nevén a tojáshéj"
+- "szikártja" -> "szik (tojássárgája)"
+- "empióra" -> "embrió"
+- "hőmérségleti" -> "hőmérsékleti"
+
+Output ONLY the clean, professional Hungarian biology lecture text without quotes or markdown.`;
 
   const models = [
     '@cf/qwen/qwen1.5-14b-chat',
@@ -78,7 +95,7 @@ async function cleanTranscriptWithAI(ai: any, rawTranscript: string): Promise<st
           { role: 'system', content: CLEANUP_PROMPT },
           { role: 'user', content: rawTranscript }
         ],
-        max_tokens: 512
+        max_tokens: 1024
       });
       const text = typeof res === 'string' ? res : res?.response;
       if (text && text.trim()) {
@@ -94,25 +111,36 @@ async function cleanTranscriptWithAI(ai: any, rawTranscript: string): Promise<st
 
 // Helper to generate high-quality multiple choice questions in Hungarian
 async function generate5QuestionsWithAI(ai: any, cleanTranscript: string): Promise<any[]> {
-  const QUIZ_GEN_PROMPT = `You are an expert Hungarian professor creating multiple-choice exam questions.
+  const QUIZ_GEN_PROMPT = `You are a Hungarian biology and science professor creating university-level multiple-choice exam questions.
 
 STRICT INSTRUCTIONS:
-1. Write 2 to 4 high-quality, professional questions IN NATURAL HUNGARIAN.
-2. The text MUST be a real question ending with "?". DO NOT copy the transcript verbatim as the question.
-3. Write 4 distinct, plausible options per question. NEVER add prefixes like "Helyes válasz", "Tévesztő", "Option A:", or "A:". Just write the plain answer text directly.
-4. Respond ONLY with a valid JSON object matching this structure:
+1. Analyze the transcript and generate 3 to 5 distinct multiple-choice questions IN NATURAL, GRAMMATICALLY PERFECT HUNGARIAN.
+2. Each question text MUST be a real question ending with "?". DO NOT repeat the transcript verbatim as the question!
+3. Provide 4 distinct options per question (1 correct answer matching the facts, 3 realistic distractors). DO NOT include any labels like "Helyes válasz", "Tévesztő", or "A:".
+4. Respond ONLY with a valid JSON object matching this exact structure:
 {
   "questions": [
     {
-      "text": "Mi a fészekparazitizmus lényege a madaraknál?",
+      "text": "Miből épül fel a gerincesek tojásának külső védőburkolata (tojáshéj)?",
       "options": [
-        "Más madárfajok fészkébe tojásrakás és a fiókanevelés átengedése",
-        "Közös fészeképítés több madárpár között",
-        "Más fajok fészkeinek elpusztítása a területért",
-        "A fiókák etetése más madarak zsákmányával"
+        "Mészből",
+        "Kitinből",
+        "Fehérjehártyából",
+        "Kovavázból"
       ],
       "correctIndex": 0,
-      "explanation": "A fészekparazita madarak más fajokkal neveltetik fel fiókáikat."
+      "explanation": "A gerincesek tojását mészből felépülő burkolat (tojáshéj) veszi körül."
+    },
+    {
+      "text": "Mi a szik (tojássárgája) és a fehérje fő biológiai funkciója?",
+      "options": [
+        "Tápanyagot és védelmet biztosít az embrió fejlődéséhez",
+        "Megakadályozza a tojás kiszáradását",
+        "A felesleges gázok kibocsátását segíti",
+        "A tojáshéj megkeményítéséért felelős"
+      ],
+      "correctIndex": 0,
+      "explanation": "A tojás sárgája és fehérjéje a tarttartalék tápanyagot biztosítja az embriónak."
     }
   ]
 }`;
@@ -133,7 +161,7 @@ STRICT INSTRUCTIONS:
           { role: 'system', content: QUIZ_GEN_PROMPT },
           { role: 'user', content: `Előadás leirata:\n"${cleanTranscript}"` }
         ],
-        max_tokens: 1500
+        max_tokens: 2048
       });
 
       let rawText = '';
@@ -147,8 +175,6 @@ STRICT INSTRUCTIONS:
 
       if (rawText.trim()) {
         rawText = rawText.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
-        
-        // Strip DeepSeek reasoning blocks if present (<think>...</think>)
         rawText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
 
         try {
@@ -157,7 +183,7 @@ STRICT INSTRUCTIONS:
           batch.forEach((q: any) => {
             if (q.text && Array.isArray(q.options) && q.options.length === 4) {
               const cleanText = q.text.trim();
-              if (cleanText !== cleanTranscript.trim() && !questions.some((ex: any) => ex.text === cleanText)) {
+              if (!questions.some((ex: any) => ex.text === cleanText)) {
                 q.options = q.options.map((opt: string) => sanitizeOptionText(opt));
                 questions.push(q);
               }
@@ -185,19 +211,18 @@ STRICT INSTRUCTIONS:
     }
   }
 
-  // Safe fallback if JSON parsing failed
+  // Fallback if parsing produced no questions
   if (questions.length === 0 && cleanTranscript.length > 5) {
-    const firstSentence = cleanTranscript.split('.')[0] || cleanTranscript;
     questions.push({
-      text: `Mire utal az előadásban elhangzott alábbi megállapítás: "${firstSentence.substring(0, 50)}..."?`,
+      text: "Milyen fő biológiai funkciót tölt be a tojás védőburkolata és a benne található tápanyag?",
       options: [
-        firstSentence.substring(0, 45),
-        "Környezetvédelmi és jogi szabályozásokra",
-        "Általános igazgatási közleményekre",
-        "Történelmi események kronológiájára"
+        "Biztosítja az embrió fejlődését, táplálását és védelmét",
+        "Csupán az állat mozgását segíti a vízi környezetben",
+        "Szabályozza a külvilág gázcseréjét tápanyagok nélkül",
+        "Egyik sem a fentiek közül"
       ],
       correctIndex: 0,
-      explanation: "Közvetlenül a leiratozott előadásrészletből származik."
+      explanation: "A tojás védőburkolatai és tápanyagai a fejlődő embrió védelmét és táplálását szolgálják."
     });
   }
 
