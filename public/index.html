@@ -105,6 +105,14 @@
           </div>
 
           <div class="space-y-3">
+            <!-- Lecture Topic / Domain Anchor Field -->
+            <div>
+              <label class="block text-[11px] font-semibold text-purple-300 mb-1 flex items-center gap-1">
+                <span>🎯 Óra Témája / Tantárgy (AI Kontextus Horgony):</span>
+              </label>
+              <input type="text" id="lectureTopicInput" placeholder="Pl.: Középkori történelem (korszakolás), Termodinamika, Biológia..." class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs focus:border-purple-500 focus:outline-none text-slate-100 placeholder-slate-500">
+            </div>
+
             <div class="flex gap-2">
               <button id="startMicBtn" class="flex-1 py-2.5 px-3 bg-brand-600 hover:bg-brand-500 active:bg-brand-700 text-white font-medium text-xs rounded-xl shadow-lg shadow-brand-600/30 transition flex items-center justify-center gap-1">
                 <span>▶ Start Mic</span>
@@ -721,7 +729,12 @@
           return;
         }
 
-        const audioBlob = new Blob(recordedBlobs, { type: 'audio/webm' });
+        let blobsToSend = recordedBlobs;
+        if (recordedBlobs.length > 6) {
+          // Keep audio payload under 3MB (last 60s of recording) to prevent Cloudflare 3006 payload limit error
+          blobsToSend = recordedBlobs.slice(-6);
+        }
+        const audioBlob = new Blob(blobsToSend, { type: 'audio/webm' });
         recordedBlobs = [];
 
         await sendAudioChunk(audioBlob);
@@ -737,8 +750,10 @@
       setAudioStatus(`🎙️ ${Math.round(blob.size / 1024)} KB leiratozása & tisztítása Whisper AI-val...`);
 
       try {
+        const topic = document.getElementById('lectureTopicInput') ? document.getElementById('lectureTopicInput').value.trim() : '';
         const formData = new FormData();
         formData.append('audio', blob, 'chunk.webm');
+        if (topic) formData.append('topic', topic);
 
         const res = await fetch(`/api/room/${encodeURIComponent(currentRoom)}/audio`, {
           method: 'POST',

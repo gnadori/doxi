@@ -96,15 +96,16 @@ function sanitizeOptionText(text: string): string {
   return fixHungarianSpelling(cleaned);
 }
 
-// Helper to clean speech-to-text transcript for ANY academic discipline & STEM/Humanities formulas
-async function cleanTranscriptWithAI(ai: any, rawTranscript: string): Promise<string> {
+// Helper to clean speech-to-text transcript for ANY academic discipline using optional lecture topic context
+async function cleanTranscriptWithAI(ai: any, rawTranscript: string, topic?: string): Promise<string> {
   const CLEANUP_PROMPT = `You are a master Hungarian university editor and academic proofreader (History, Physics, Literature, Chemistry, Law, Biology, Engineering).
+${topic ? `\nIMPORTANT LECTURE TOPIC / SUBJECT ANCHOR: "${topic}"\nUse this lecture topic context to accurately recognize specialized vocabulary, formulas, proper names, dates, and terminology.` : ''}
 
 YOUR TASK:
 Reconstruct garbled speech-to-text transcripts into clean, accurate, professional Hungarian lecture text.
 
 STT CORRECTION RULES:
-1. Fix misheard speech typos, phonetic distortions, broken historical names, Latin terms, and formulas (e.g. "Erdo Bruni" -> "Leonardo Bruni", "médián évum" -> "Medium Aevum", "Milano-nyevediktum" -> "milanói ediktum", "Balcman" -> "Boltzmann-állandó", "Avogadro-rozsma" -> "Avogadro-szám").
+1. Fix misheard speech typos, phonetic distortions, broken historical names, Latin terms, and formulas using the lecture topic context.
 2. Reconstruct proper Hungarian grammar, punctuation, proper nouns, and historical/scientific terminology for any discipline.
 3. Preserve all factual concepts, dates, names, and academic meaning intact.
 4. Output ONLY the clean, restored lecture text without quotes or markdown.`;
@@ -138,8 +139,9 @@ STT CORRECTION RULES:
 }
 
 // Helper to generate universal high-quality multiple choice questions in Hungarian for ANY subject
-async function generate5QuestionsWithAI(ai: any, cleanTranscript: string): Promise<any[]> {
+async function generate5QuestionsWithAI(ai: any, cleanTranscript: string, topic?: string): Promise<any[]> {
   const QUIZ_GEN_PROMPT = `You are a universal academic exam question designer. Analyze the lecture transcript across ANY discipline (History, Literature, Physics, Biology, Law, IT, Economics, Chemistry, Mathematics, Geography, etc.) and generate 3 to 5 distinct multiple-choice questions.
+${topic ? `\nLECTURE TOPIC / SUBJECT ANCHOR: "${topic}"\nEnsure questions directly test key concepts related to this lecture topic.` : ''}
 
 STRICT INSTRUCTIONS:
 1. Write 3 to 5 high-quality, professional questions IN NATURAL, GRAMMATICALLY PERFECT HUNGARIAN.
@@ -257,6 +259,7 @@ app.post('/api/room/:roomId/audio', async (c) => {
 
     let audioBuffer: ArrayBuffer | null = null;
     let textSample: string | null = null;
+    let topic: string | undefined = undefined;
 
     const contentType = c.req.header('content-type') || '';
     if (contentType.includes('multipart/form-data')) {
@@ -269,6 +272,9 @@ app.post('/api/room/:roomId/audio', async (c) => {
       }
       if (typeof body['text'] === 'string') {
         textSample = body['text'];
+      }
+      if (typeof body['topic'] === 'string' && body['topic'].trim()) {
+        topic = body['topic'].trim();
       }
     } else {
       audioBuffer = await c.req.arrayBuffer();
@@ -318,16 +324,19 @@ app.post('/api/room/:roomId/audio', async (c) => {
       }, 400);
     }
 
-    // Step 1: Clean transcript with AI across any academic subject
-    const cleanTranscript = await cleanTranscriptWithAI(c.env.AI, rawTranscript);
+    // Step 1: Clean transcript with AI across any academic subject using optional topic context
+    const cleanTranscript = await cleanTranscriptWithAI(c.env.AI, rawTranscript, topic);
 
     // Save active clean transcript to KV for "Generate More" feature
     try {
       await c.env.LECTURE_KV.put(`transcript:${roomId}`, cleanTranscript, { expirationTtl: 86400 });
+      if (topic) {
+        await c.env.LECTURE_KV.put(`topic:${roomId}`, topic, { expirationTtl: 86400 });
+      }
     } catch (e) {}
 
     // Step 2: Generate high quality Hungarian questions batch from the cleaned transcript
-    let generatedQuestions = await generate5QuestionsWithAI(c.env.AI, cleanTranscript);
+    let generatedQuestions = await generate5QuestionsWithAI(c.env.AI, cleanTranscript, topic);
 
     const savedQuestions = [];
     const now = Date.now();
@@ -380,6 +389,7 @@ app.post('/api/room/:roomId/audio', async (c) => {
     return c.json({
       success: true,
       roomId,
+      topic,
       rawTranscript,
       cleanTranscript,
       questions: savedQuestions
@@ -396,22 +406,30 @@ app.post('/api/room/:roomId/more-questions', async (c) => {
   try {
     const roomId = c.req.param('roomId');
     let cleanTranscript = '';
+    let topic: string | undefined = undefined;
 
     const body = await c.req.parseBody().catch(() => ({} as any));
     if (typeof body['transcript'] === 'string') {
       cleanTranscript = body['transcript'];
+    }
+    if (typeof body['topic'] === 'string' && body['topic'].trim()) {
+      topic = body['topic'].trim();
     }
 
     if (!cleanTranscript) {
       const stored = await c.env.LECTURE_KV.get(`transcript:${roomId}`);
       if (stored) cleanTranscript = stored;
     }
+    if (!topic) {
+      const storedTopic = await c.env.LECTURE_KV.get(`topic:${roomId}`);
+      if (storedTopic) topic = storedTopic;
+    }
 
     if (!cleanTranscript) {
       return c.json({ error: 'Nincs elmentett előadásleirat a szobához' }, 400);
     }
 
-    const generatedQuestions = await generate5QuestionsWithAI(c.env.AI, cleanTranscript);
+    const generatedQuestions = await generate5QuestionsWithAI(c.env.AI, cleanTranscript, topic);
     const savedQuestions = [];
     const now = Date.now();
 
