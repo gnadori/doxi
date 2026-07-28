@@ -52,10 +52,18 @@ app.onError((err, c) => {
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: Date.now() }));
 
-// Helper to fix common Hungarian speech-to-text phonetic spelling typos (e.g. "hőmérséglet" -> "hőmérséklet")
+// Helper to fix common Hungarian speech-to-text phonetic spelling typos & STEM formula distortions
 function fixHungarianSpelling(text: string): string {
   if (!text) return '';
   return text
+    .replace(/Balcman/gi, 'Boltzmann')
+    .replace(/Bolcman/gi, 'Boltzmann')
+    .replace(/Avogadro-rozsma/gi, 'Avogadro-szám')
+    .replace(/Avogadrorozsma/gi, 'Avogadro-szám')
+    .replace(/gázalandó/gi, 'gázállandó')
+    .replace(/pécketől[\s,]*véketőpertékető/gi, 'p1·V1/T1 = p2·V2/T2')
+    .replace(/pécketől/gi, 'p1·V1')
+    .replace(/véketőpertékető/gi, 'V2/T2')
     .replace(/hőmérséglet/gi, 'hőmérséklet')
     .replace(/hőmérségleti/gi, 'hőmérsékleti')
     .replace(/hőmérségletet/gi, 'hőmérsékletet')
@@ -80,18 +88,18 @@ function sanitizeOptionText(text: string): string {
   return fixHungarianSpelling(cleaned);
 }
 
-// Helper to clean speech-to-text transcript for ANY academic discipline (Universal Domain-Agnostic Cleaner)
+// Helper to clean speech-to-text transcript for ANY academic discipline & STEM formulas
 async function cleanTranscriptWithAI(ai: any, rawTranscript: string): Promise<string> {
-  const CLEANUP_PROMPT = `You are a universal Hungarian academic editor and speech-to-text proofreader. You analyze lecture audio transcripts across ALL academic subjects (History, Physics, Literature, Chemistry, Law, Biology, Economics, IT, Mathematics, Geography, Philosophy, Art History, etc.).
+  const CLEANUP_PROMPT = `You are a master academic editor and STEM proofreader (Physics, Chemistry, Math, Biology, History, Law, Engineering).
 
 YOUR TASK:
-Reconstruct and clean the raw speech-to-text transcript into clear, fluent, grammatically perfect Hungarian lecture sentences.
+Reconstruct garbled speech-to-text transcripts into clean, accurate, professional Hungarian lecture text.
 
-RULES:
-1. Fix misheard speech typos, phonetic distortions, and broken word fragments using context across any subject.
-2. Restore proper Hungarian grammar, punctuation, and correct subject-matter terminology for any discipline.
-3. Preserve all factual concepts and academic meaning intact.
-4. Output ONLY the clean, professional Hungarian lecture text without quotes or markdown.`;
+STEM & PHYSICS FORMULA RECONSTRUCTION RULES:
+1. Fix misheard formulas, constants, and variables (e.g., "pécketől véketőpertékető" -> "(p1·V1)/T1 = (p2·V2)/T2", "Balcman" -> "Boltzmann-állandó", "Avogadro-rozsma" -> "Avogadro-szám", "gázalandó" -> "egyetemes gázállandó (R)", "kelvinben mért hűmérséglet" -> "Kelvinben mért hőmérséklet (T)").
+2. Restore proper scientific terminology, symbols, and units (p = nyomás, V = térfogat, T = hőmérséklet, R = 8.314 J/mol·K).
+3. Reconstruct clear, grammatically perfect Hungarian lecture sentences.
+4. Output ONLY the clean, restored lecture text without quotes or markdown.`;
 
   const models = [
     '@cf/qwen/qwen1.5-14b-chat',
