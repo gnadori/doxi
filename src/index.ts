@@ -52,14 +52,23 @@ app.onError((err, c) => {
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: Date.now() }));
 
+// Helper to strip unwanted labels (e.g. "Helyes válasz:", "Tévesztő A:", "Option A:") from option text
+function sanitizeOptionText(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/^(Helyes válasz|Helyes|Tévesztő [A-Z0-9]?|Tévesztő|Option [A-Z0-9]?|[A-D])\s*[:\.-]\s*/gi, '')
+    .trim();
+}
+
 // Helper to clean speech-to-text transcript (Phonetic & Typos correction)
 async function cleanTranscriptWithAI(ai: any, rawTranscript: string): Promise<string> {
-  const CLEANUP_PROMPT = `You are an expert Hungarian proofreader. Correct speech-to-text typos in Hungarian lecture transcripts (e.g. "borosztján" -> "borostyán", "fastes" -> "fasces", "szarómaik" -> "szarmaták"). Keep factual meaning intact. Output ONLY the clean Hungarian text without quotes.`;
+  const CLEANUP_PROMPT = `You are a university editor and Hungarian proofreader. Correct speech recognition typos in lecture transcripts (e.g., "borosztján" -> "borostyán", "reprodukányomagát" -> "szaporodását", "szarómaik" -> "szarmaták"). Ensure natural Hungarian syntax and correct terminology. Output ONLY the clean Hungarian text without quotes.`;
 
   const models = [
-    '@cf/meta/llama-3.2-3b-instruct',
-    '@cf/meta/llama-3.2-1b-instruct',
-    '@cf/mistral/mistral-7b-instruct-v0.2'
+    '@cf/qwen/qwen1.5-14b-chat',
+    '@cf/qwen/qwen1.5-7b-chat',
+    '@cf/mistral/mistral-7b-instruct-v0.2',
+    '@cf/meta/llama-3.2-3b-instruct'
   ];
 
   for (const model of models) {
@@ -76,107 +85,119 @@ async function cleanTranscriptWithAI(ai: any, rawTranscript: string): Promise<st
         return text.trim().replace(/^"|"$/g, '');
       }
     } catch (e) {
-      console.error('Transcript cleanup error:', e);
+      console.error(`Transcript cleanup error (${model}):`, e);
     }
   }
 
   return rawTranscript;
 }
 
-// Helper to generate multiple questions via multi-pass LLM prompts
+// Helper to generate high-quality multiple choice questions in Hungarian
 async function generate5QuestionsWithAI(ai: any, cleanTranscript: string): Promise<any[]> {
-  const QUIZ_GEN_PROMPT = `You are an expert educational assessment designer. Analyze the transcript and generate 2 or 3 distinct multiple-choice questions in Hungarian.
+  const QUIZ_GEN_PROMPT = `You are an expert Hungarian professor creating multiple-choice exam questions.
 
-CRITICAL INSTRUCTIONS:
-1. Output 100% in Hungarian (question, all 4 choices, and explanation).
-2. Each question must have 4 distinct choices (1 correct answer, 3 realistic distractors).
-3. Respond ONLY with a valid JSON object matching this exact structure:
+STRICT INSTRUCTIONS:
+1. Write 2 to 4 high-quality, professional questions IN NATURAL HUNGARIAN.
+2. The text MUST be a real question ending with "?". DO NOT copy the transcript verbatim as the question.
+3. Write 4 distinct, plausible options per question. NEVER add prefixes like "Helyes válasz", "Tévesztő", "Option A:", or "A:". Just write the plain answer text directly.
+4. Respond ONLY with a valid JSON object matching this structure:
 {
   "questions": [
     {
-      "text": "Kérdés szövege magyarul?",
-      "options": ["Helyes válasz", "Tévesztő A", "Tévesztő B", "Tévesztő C"],
+      "text": "Mi a fészekparazitizmus lényege a madaraknál?",
+      "options": [
+        "Más madárfajok fészkébe tojásrakás és a fiókanevelés átengedése",
+        "Közös fészeképítés több madárpár között",
+        "Más fajok fészkeinek elpusztítása a területért",
+        "A fiókák etetése más madarak zsákmányával"
+      ],
       "correctIndex": 0,
-      "explanation": "Rövid magyarázat magyarul."
+      "explanation": "A fészekparazita madarak más fajokkal neveltetik fel fiókáikat."
     }
   ]
 }`;
 
   const models = [
-    '@cf/meta/llama-3.2-3b-instruct',
-    '@cf/meta/llama-3.2-1b-instruct',
-    '@cf/mistral/mistral-7b-instruct-v0.2'
+    '@cf/qwen/qwen1.5-14b-chat',
+    '@cf/qwen/qwen1.5-7b-chat',
+    '@cf/mistral/mistral-7b-instruct-v0.2',
+    '@cf/meta/llama-3.2-3b-instruct'
   ];
 
   let questions: any[] = [];
 
-  for (let pass = 0; pass < 2; pass++) {
-    let rawText = '';
-    for (const model of models) {
-      try {
-        const res = await ai.run(model, {
-          messages: [
-            { role: 'system', content: QUIZ_GEN_PROMPT },
-            { role: 'user', content: `Transcript:\n"${cleanTranscript}"` }
-          ],
-          max_tokens: 1500
-        });
+  for (const model of models) {
+    try {
+      const res = await ai.run(model, {
+        messages: [
+          { role: 'system', content: QUIZ_GEN_PROMPT },
+          { role: 'user', content: `Előadás leirata:\n"${cleanTranscript}"` }
+        ],
+        max_tokens: 1500
+      });
 
-        if (typeof res === 'string') {
-          rawText = res;
-        } else if (res && typeof res.response === 'string') {
-          rawText = res.response;
-        } else if (res && typeof res.response === 'object') {
-          rawText = JSON.stringify(res.response);
-        }
-
-        if (rawText.trim()) break;
-      } catch (e) {
-        console.error('Quiz generation model error:', e);
+      let rawText = '';
+      if (typeof res === 'string') {
+        rawText = res;
+      } else if (res && typeof res.response === 'string') {
+        rawText = res.response;
+      } else if (res && typeof res.response === 'object') {
+        rawText = JSON.stringify(res.response);
       }
-    }
 
-    if (rawText) {
-      rawText = rawText.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
-      try {
-        const parsed = JSON.parse(rawText);
-        const batch = Array.isArray(parsed.questions) ? parsed.questions : (parsed.text ? [parsed] : []);
-        batch.forEach((q: any) => {
-          if (q.text && Array.isArray(q.options) && q.options.length === 4) {
-            if (!questions.some((existing: any) => existing.text === q.text)) {
-              questions.push(q);
+      if (rawText.trim()) {
+        rawText = rawText.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+        
+        // Strip DeepSeek reasoning blocks if present (<think>...</think>)
+        rawText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+        try {
+          const parsed = JSON.parse(rawText);
+          const batch = Array.isArray(parsed.questions) ? parsed.questions : (parsed.text ? [parsed] : []);
+          batch.forEach((q: any) => {
+            if (q.text && Array.isArray(q.options) && q.options.length === 4) {
+              const cleanText = q.text.trim();
+              if (cleanText !== cleanTranscript.trim() && !questions.some((ex: any) => ex.text === cleanText)) {
+                q.options = q.options.map((opt: string) => sanitizeOptionText(opt));
+                questions.push(q);
+              }
+            }
+          });
+        } catch (parseErr) {
+          const matches = rawText.match(/\{[^{}]*"text"[^{}]*"options"[^{}]*\}/g);
+          if (matches) {
+            for (const m of matches) {
+              try {
+                const q = JSON.parse(m);
+                if (q.text && q.options && Array.isArray(q.options) && q.options.length === 4) {
+                  q.options = q.options.map((opt: string) => sanitizeOptionText(opt));
+                  questions.push(q);
+                }
+              } catch (e) {}
             }
           }
-        });
-      } catch (parseErr) {
-        const matches = rawText.match(/\{[^{}]*"text"[^{}]*"options"[^{}]*\}/g);
-        if (matches) {
-          for (const m of matches) {
-            try {
-              const q = JSON.parse(m);
-              if (q.text && q.options) questions.push(q);
-            } catch (e) {}
-          }
         }
       }
-    }
 
-    if (questions.length >= 3) break;
+      if (questions.length >= 2) break;
+    } catch (e) {
+      console.error(`Quiz generation model error (${model}):`, e);
+    }
   }
 
   // Safe fallback if JSON parsing failed
   if (questions.length === 0 && cleanTranscript.length > 5) {
-    const snippet = cleanTranscript.substring(0, 50);
+    const firstSentence = cleanTranscript.split('.')[0] || cleanTranscript;
     questions.push({
-      text: `Mire vonatkozik az előadásban elhangzott alábbi megállapítás: "${snippet}..."?`,
+      text: `Mire utal az előadásban elhangzott alábbi megállapítás: "${firstSentence.substring(0, 50)}..."?`,
       options: [
-        cleanTranscript.substring(0, 40),
-        "Általános adminisztratív közleményekre",
-        "Környezetvédelmi jogszabályokra",
-        "Történelmi kronológiára"
+        firstSentence.substring(0, 45),
+        "Környezetvédelmi és jogi szabályozásokra",
+        "Általános igazgatási közleményekre",
+        "Történelmi események kronológiájára"
       ],
       correctIndex: 0,
-      explanation: "Közvetlenül az elhangzott előadásrészletből származik."
+      explanation: "Közvetlenül a leiratozott előadásrészletből származik."
     });
   }
 
@@ -262,7 +283,7 @@ app.post('/api/room/:roomId/audio', async (c) => {
       await c.env.LECTURE_KV.put(`transcript:${roomId}`, cleanTranscript, { expirationTtl: 86400 });
     } catch (e) {}
 
-    // Step 2: Generate questions batch from the cleaned transcript
+    // Step 2: Generate high quality Hungarian questions batch from the cleaned transcript
     let generatedQuestions = await generate5QuestionsWithAI(c.env.AI, cleanTranscript);
 
     const savedQuestions = [];
@@ -271,14 +292,19 @@ app.post('/api/room/:roomId/audio', async (c) => {
     for (const q of generatedQuestions) {
       const questionId = `q_${now}_${Math.random().toString(36).substring(2, 7)}`;
 
+      let questionText = (q.text || 'Megértési ellenőrző kérdés').trim();
+      if (questionText === cleanTranscript.trim() || questionText === rawTranscript.trim()) {
+        questionText = 'Mi a legfőbb megállapítás az elhangzott előadásrészlet alapján?';
+      }
+
       const questionObj = {
         id: questionId,
-        text: q.text || 'Megértési ellenőrző kérdés',
-        options: Array.isArray(q.options) && q.options.length === 4 ? q.options : [
-          q.options?.[0] || 'Elsődleges megállapítás',
-          q.options?.[1] || 'Alternatív elmélet',
-          q.options?.[2] || 'Eltérő állítás',
-          q.options?.[3] || 'Egyik sem'
+        text: questionText,
+        options: Array.isArray(q.options) && q.options.length === 4 ? q.options.map((opt: string) => sanitizeOptionText(opt)) : [
+          sanitizeOptionText(q.options?.[0] || 'Elsődleges megállapítás'),
+          sanitizeOptionText(q.options?.[1] || 'Alternatív elmélet'),
+          sanitizeOptionText(q.options?.[2] || 'Eltérő állítás'),
+          sanitizeOptionText(q.options?.[3] || 'Egyik sem')
         ],
         correctIndex: typeof q.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex < 4 ? q.correctIndex : 0,
         explanation: q.explanation || 'Az elhangzottak alapján.',
@@ -351,11 +377,11 @@ app.post('/api/room/:roomId/more-questions', async (c) => {
       const questionObj = {
         id: questionId,
         text: q.text || 'Megértési ellenőrző kérdés',
-        options: Array.isArray(q.options) && q.options.length === 4 ? q.options : [
-          q.options?.[0] || 'Elsődleges megállapítás',
-          q.options?.[1] || 'Alternatív elmélet',
-          q.options?.[2] || 'Eltérő állítás',
-          q.options?.[3] || 'Egyik sem'
+        options: Array.isArray(q.options) && q.options.length === 4 ? q.options.map((opt: string) => sanitizeOptionText(opt)) : [
+          sanitizeOptionText(q.options?.[0] || 'Elsődleges megállapítás'),
+          sanitizeOptionText(q.options?.[1] || 'Alternatív elmélet'),
+          sanitizeOptionText(q.options?.[2] || 'Eltérő állítás'),
+          sanitizeOptionText(q.options?.[3] || 'Egyik sem')
         ],
         correctIndex: typeof q.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex < 4 ? q.correctIndex : 0,
         explanation: q.explanation || 'Az elhangzottak alapján.',
