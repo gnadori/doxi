@@ -179,9 +179,21 @@
         <div class="glass-card rounded-2xl p-6 flex flex-col h-[500px]">
           <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
             <h3 class="font-bold text-slate-200 flex items-center gap-2">
-              <span>📋 Question Review Queue</span>
-              <span id="queueBadge" class="bg-amber-500/20 text-amber-400 text-xs px-2 py-0.5 rounded-full border border-amber-500/30">0 pending</span>
+              <span>📋 Kérdés-Jóváhagyási Sor</span>
+              <span id="queueBadge" class="bg-amber-500/20 text-amber-400 text-xs px-2 py-0.5 rounded-full border border-amber-500/30">0 függőben</span>
             </h3>
+            <button id="generateMoreBtn" class="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded-lg transition border border-slate-700 flex items-center gap-1">
+              <span>➕ Újabb 5 Kérdés</span>
+            </button>
+          </div>
+
+          <!-- Transcript Correction Banner -->
+          <div id="transcriptCorrectionBanner" class="hidden mb-3 p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-1">
+            <div class="text-slate-400 font-semibold flex justify-between">
+              <span>🎙️ Tisztított és Javított Leirat (AI Phonetic Corrector):</span>
+              <span id="transcriptWordCount" class="font-mono text-[10px] text-slate-500"></span>
+            </div>
+            <p id="cleanTranscriptText" class="text-slate-200 italic leading-relaxed"></p>
           </div>
 
           <div id="pendingQuestionsList" class="flex-1 overflow-y-auto space-y-4 pr-1">
@@ -710,7 +722,7 @@
         return;
       }
 
-      setAudioStatus(`🎙️ ${Math.round(blob.size / 1024)} KB hang leiratozása Whisper AI-val...`);
+      setAudioStatus(`🎙️ ${Math.round(blob.size / 1024)} KB leiratozása & tisztítása Whisper AI-val...`);
 
       try {
         const formData = new FormData();
@@ -724,13 +736,16 @@
         console.log('Audio chunk response:', json);
 
         if (res.ok && json.questions && json.questions.length > 0) {
+          if (json.cleanTranscript) {
+            displayCleanTranscript(json.cleanTranscript);
+          }
           json.questions.forEach(q => {
             if (!pendingQuestions.some(existing => existing.id === q.id)) {
               addQuestionToPendingQueue(q);
             }
           });
-          setAudioStatus(`✓ Felismerve: "${json.transcript.substring(0, 35)}..."`);
-          alert(`Sikeres leiratozás!\n\nFelismert beszéd: "${json.transcript}"\n\nGenerált kérdés bekerült a várólistára.`);
+          setAudioStatus(`✓ Sikeres: ${json.questions.length} kérdés generálva`);
+          alert(`Sikeres leiratozás & javítás!\n\nJavított leirat: "${json.cleanTranscript || json.transcript}"\n\n${json.questions.length} db kérdés bekerült a várólistára.`);
         } else {
           setAudioStatus(`❌ AI Hiba: ${json.error || 'Failed'}`, true);
           alert(`Hiba történt: ${json.error || 'Ismeretlen hiba'} ${json.details ? '(' + json.details + ')' : ''}`);
@@ -741,6 +756,51 @@
         alert('Hiba történt a felvétel elküldésekor.');
       }
     }
+
+    function displayCleanTranscript(text) {
+      const banner = document.getElementById('transcriptCorrectionBanner');
+      const textElem = document.getElementById('cleanTranscriptText');
+      const countElem = document.getElementById('transcriptWordCount');
+      if (banner && textElem) {
+        textElem.textContent = `"${text}"`;
+        if (countElem) {
+          countElem.textContent = `${text.split(/\s+/).length} szó`;
+        }
+        banner.classList.remove('hidden');
+      }
+    }
+
+    // Generate 5 More Questions Button
+    document.getElementById('generateMoreBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('generateMoreBtn');
+      const originalHTML = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="animate-pulse">⏳ Generálás...</span>';
+
+      try {
+        const res = await fetch(`/api/room/${encodeURIComponent(currentRoom)}/more-questions`, {
+          method: 'POST'
+        });
+        const json = await res.json();
+        
+        if (res.ok && json.questions && json.questions.length > 0) {
+          json.questions.forEach(q => {
+            if (!pendingQuestions.some(existing => existing.id === q.id)) {
+              addQuestionToPendingQueue(q);
+            }
+          });
+          alert(`Sikeresen generáltunk ${json.questions.length} db újabb kérdést! Válassz a várólistából.`);
+        } else {
+          alert(`Hiba: ${json.error || 'Nem sikerült újabb kérdéseket generálni.'} ${json.details ? '(' + json.details + ')' : ''}`);
+        }
+      } catch (err) {
+        console.error('Generate more questions failed:', err);
+        alert('Hiba történt a kérdések generálása során.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+      }
+    });
 
     // Instant Sample Text Trigger
     document.getElementById('sendSampleTextBtn').addEventListener('click', async () => {

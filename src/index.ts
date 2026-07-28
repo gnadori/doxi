@@ -52,7 +52,118 @@ app.onError((err, c) => {
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: Date.now() }));
 
-// 1. Audio Ingestion & Quiz Generation Endpoint
+// Helper to clean speech-to-text transcript (Phonetic & Typos correction)
+async function cleanTranscriptWithAI(ai: any, rawTranscript: string): Promise<string> {
+  const CLEANUP_PROMPT = `You are an expert Hungarian linguist and proofreader. Correct speech-to-text recognition typos, phonetically misheard words, and spelling mistakes in lecture transcripts.
+
+RULES:
+1. Fix misheard words (e.g. "borosztján" -> "borostyán", "fastes" -> "fasces", "szarómaik" -> "szarmaták", "összecsosak" -> "összecsapások").
+2. Restore proper Hungarian grammar, punctuation, and scientific/historical terminology.
+3. Keep the factual meaning intact.
+4. Output ONLY the clean corrected Hungarian transcript text without preamble or markdown.`;
+
+  const models = [
+    '@cf/meta/llama-3.2-3b-instruct',
+    '@cf/meta/llama-3.2-1b-instruct',
+    '@cf/mistral/mistral-7b-instruct-v0.2'
+  ];
+
+  for (const model of models) {
+    try {
+      const res = await ai.run(model, {
+        messages: [
+          { role: 'system', content: CLEANUP_PROMPT },
+          { role: 'user', content: rawTranscript }
+        ]
+      });
+      const text = typeof res === 'string' ? res : res?.response;
+      if (text && text.trim()) {
+        return text.trim().replace(/^"|"$/g, '');
+      }
+    } catch (e) {
+      console.error('Transcript cleanup error:', e);
+    }
+  }
+
+  return rawTranscript; // Fallback to raw if LLM cleaning fails
+}
+
+// Helper to generate a batch of 5 questions
+async function generate5QuestionsWithAI(ai: any, cleanTranscript: string): Promise<any[]> {
+  const QUIZ_GEN_PROMPT = `You are a master educational assessment designer. Analyze the lecture transcript and generate exactly 5 distinct, high-quality multiple-choice comprehension questions in Hungarian.
+
+REQUIREMENTS:
+1. Generate exactly 5 distinct questions covering different factual points or concepts from the transcript.
+2. Output 100% in Hungarian (question, all 4 options, and explanation).
+3. Each question must have 4 distinct, informative options (1 correct answer, 3 realistic distractors).
+4. Output ONLY a valid JSON object matching this structure (no markdown fences, no preamble):
+{
+  "questions": [
+    {
+      "text": "Első kérdés szövege?",
+      "options": ["Helyes válasz", "Tévesztő A", "Tévesztő B", "Tévesztő C"],
+      "correctIndex": 0,
+      "explanation": "Rövid magyarázat."
+    },
+    ... (total 5 questions)
+  ]
+}`;
+
+  const models = [
+    '@cf/meta/llama-3.2-3b-instruct',
+    '@cf/meta/llama-3.2-1b-instruct',
+    '@cf/mistral/mistral-7b-instruct-v0.2'
+  ];
+
+  let rawText = '';
+
+  for (const model of models) {
+    try {
+      const res = await ai.run(model, {
+        messages: [
+          { role: 'system', content: QUIZ_GEN_PROMPT },
+          { role: 'user', content: `Transcript:\n"${cleanTranscript}"` }
+        ]
+      });
+
+      if (typeof res === 'string') {
+        rawText = res;
+      } else if (res && typeof res.response === 'string') {
+        rawText = res.response;
+      } else if (res && typeof res.response === 'object') {
+        rawText = JSON.stringify(res.response);
+      }
+
+      if (rawText.trim()) break;
+    } catch (e) {
+      console.error('Quiz generation model error:', e);
+    }
+  }
+
+  rawText = rawText.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+
+  let questions: any[] = [];
+  try {
+    const parsed = JSON.parse(rawText);
+    if (Array.isArray(parsed.questions)) {
+      questions = parsed.questions;
+    } else if (parsed.text && parsed.options) {
+      questions = [parsed];
+    }
+  } catch (parseErr) {
+    const match = rawText.match(/\{[\s\S]*\}/);
+    if (match) {
+      try {
+        const parsed = JSON.parse(match[0]);
+        questions = parsed.questions || [parsed];
+      } catch (e) {}
+    }
+  }
+
+  return questions;
+}
+
+// 1. Audio Ingestion, Transcript Cleaning & Batch Quiz Generation Endpoint
 app.post('/api/room/:roomId/audio', async (c) => {
   try {
     const roomId = c.req.param('roomId');
@@ -79,10 +190,10 @@ app.post('/api/room/:roomId/audio', async (c) => {
       audioBuffer = await c.req.arrayBuffer();
     }
 
-    let transcript = '';
+    let rawTranscript = '';
 
     if (textSample) {
-      transcript = textSample;
+      rawTranscript = textSample;
     } else if (audioBuffer && audioBuffer.byteLength > 0) {
       const uint8Array = new Uint8Array(audioBuffer);
       const numberArray = Array.from(uint8Array);
@@ -98,125 +209,48 @@ app.post('/api/room/:roomId/audio', async (c) => {
           const whisperRes = await c.env.AI.run(model, {
             audio: numberArray,
           });
-          transcript = whisperRes?.text || whisperRes?.transcript || '';
-          if (transcript) break;
+          rawTranscript = whisperRes?.text || whisperRes?.transcript || '';
+          if (rawTranscript) break;
         } catch (err: any) {
-          console.error(`Whisper error with model ${model}:`, err);
+          console.error(`Whisper error (${model}):`, err);
           whisperErr = err.message || String(err);
         }
       }
 
-      if (!transcript && whisperErr) {
+      if (!rawTranscript && whisperErr) {
         return c.json({ error: 'Beszédleiratozási hiba a Whisper AI-nál', details: whisperErr }, 500);
       }
     } else {
       return c.json({ error: 'Nem érkezett hanganyag vagy szöveg' }, 400);
     }
 
-    transcript = transcript.trim();
+    rawTranscript = rawTranscript.trim();
 
-    // Check for minimum meaningful transcript length
-    if (!transcript || transcript.length < 12) {
+    if (!rawTranscript || rawTranscript.length < 10) {
       return c.json({
         error: 'Túl rövid vagy nem jól érthető felvétel',
         details: 'A rögzített hanganyag túl rövid volt. Kérlek beszélj 10-15 másodpercig az előadásról a jobb felismeréshez!',
-        transcript
+        rawTranscript
       }, 400);
     }
 
-    const SYSTEM_PROMPT = `You are an expert educational AI assistant. You analyze lecture audio transcripts (which may contain minor speech recognition typos) and generate 1 insightful multiple-choice comprehension question in Hungarian.
+    // Step 1: Clean and phonetically correct the transcript using LLM
+    const cleanTranscript = await cleanTranscriptWithAI(c.env.AI, rawTranscript);
 
-CRITICAL INSTRUCTIONS:
-1. Language: Output 100% in Hungarian (question, all 4 choices, and explanation).
-2. Question Quality: Formulate an intelligent, natural Hungarian question asking about the core topic or facts in the transcript. NEVER copy the raw transcript verbatim as the question. Correct any minor speech typos internally.
-3. Options: Provide 4 distinct, plausible Hungarian choices (1 correct answer matching the transcript, 3 realistic distractors). NEVER use placeholders or template text.
-4. Output ONLY valid JSON (no code blocks, no preamble):
-{
-  "questions": [
-    {
-      "text": "Melyik történelmi vagy szakmai témára utal az előadásban elhangzott részlet?",
-      "options": [
-        "A korabeli hatalmi jelvényekre és szimbólumokra",
-        "A középkori kereskedelmi útvonalakra",
-        "A modern alkotmányjogi szabályozásra",
-        "A népességnyilvántartási adatokra"
-      ],
-      "correctIndex": 0,
-      "explanation": "Az előadásrészlet a korabeli hatalmi jelvényeket és szimbólumokat tárgyalja."
-    }
-  ]
-}`;
+    // Save active clean transcript to KV for "Generate 5 More" feature
+    try {
+      await c.env.LECTURE_KV.put(`transcript:${roomId}`, cleanTranscript, { expirationTtl: 86400 });
+    } catch (e) {}
 
-    const modelsToTry = [
-      '@cf/meta/llama-3.2-3b-instruct',
-      '@cf/meta/llama-3.2-1b-instruct',
-      '@cf/mistral/mistral-7b-instruct-v0.2',
-      '@cf/qwen/qwen1.5-7b-chat'
-    ];
-
-    let llmRes: any = null;
-    let modelUsed = '';
-    let errorLogs: string[] = [];
-
-    for (const model of modelsToTry) {
-      try {
-        llmRes = await c.env.AI.run(model, {
-          messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: `Előadás leirat:\n"${transcript}"` },
-          ],
-        });
-        if (llmRes && (llmRes.response || typeof llmRes === 'string')) {
-          modelUsed = model;
-          break;
-        }
-      } catch (err: any) {
-        console.error(`LLM error (${model}):`, err);
-        errorLogs.push(`${model}: ${err.message || String(err)}`);
-      }
-    }
-
-    let generatedQuestions: any[] = [];
-    let rawText = '';
-
-    if (llmRes) {
-      if (typeof llmRes === 'string') {
-        rawText = llmRes;
-      } else if (llmRes && typeof llmRes.response === 'string') {
-        rawText = llmRes.response;
-      } else if (llmRes && typeof llmRes.response === 'object') {
-        rawText = JSON.stringify(llmRes.response);
-      } else {
-        rawText = JSON.stringify(llmRes);
-      }
-
-      // Strip markdown code fences if present
-      rawText = rawText.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
-
-      try {
-        const parsed = JSON.parse(rawText);
-        if (Array.isArray(parsed.questions)) {
-          generatedQuestions = parsed.questions;
-        } else if (parsed.text && parsed.options) {
-          generatedQuestions = [parsed];
-        }
-      } catch (parseErr) {
-        const match = rawText.match(/\{[\s\S]*\}/);
-        if (match) {
-          try {
-            const parsed = JSON.parse(match[0]);
-            generatedQuestions = parsed.questions || [parsed];
-          } catch (e) {}
-        }
-      }
-    }
+    // Step 2: Generate 5 questions from the cleaned transcript
+    let generatedQuestions = await generate5QuestionsWithAI(c.env.AI, cleanTranscript);
 
     if (!generatedQuestions || generatedQuestions.length === 0) {
       return c.json({
-        error: 'Nem sikerült érdemi kérdést generálni',
+        error: 'Nem sikerült kérdéseket generálni',
         details: 'Próbáld meg kicsit hosszabban vagy tisztábban elmondani a tézist!',
-        transcript,
-        debug: { errorLogs, rawText }
+        rawTranscript,
+        cleanTranscript
       }, 500);
     }
 
@@ -266,13 +300,9 @@ CRITICAL INSTRUCTIONS:
     return c.json({
       success: true,
       roomId,
-      transcript,
-      questions: savedQuestions,
-      debug: {
-        modelUsed,
-        rawText: rawText.substring(0, 200),
-        errorLogs
-      }
+      rawTranscript,
+      cleanTranscript,
+      questions: savedQuestions
     });
 
   } catch (globalErr: any) {
@@ -281,7 +311,79 @@ CRITICAL INSTRUCTIONS:
   }
 });
 
-// 2. WebSocket Real-time Endpoint
+// 2. Generate 5 More Questions Endpoint
+app.post('/api/room/:roomId/more-questions', async (c) => {
+  try {
+    const roomId = c.req.param('roomId');
+    let cleanTranscript = '';
+
+    const body = await c.req.parseBody().catch(() => ({} as any));
+    if (typeof body['transcript'] === 'string') {
+      cleanTranscript = body['transcript'];
+    }
+
+    if (!cleanTranscript) {
+      const stored = await c.env.LECTURE_KV.get(`transcript:${roomId}`);
+      if (stored) cleanTranscript = stored;
+    }
+
+    if (!cleanTranscript) {
+      return c.json({ error: 'Nincs elmentett előadásleirat a szobához' }, 400);
+    }
+
+    const generatedQuestions = await generate5QuestionsWithAI(c.env.AI, cleanTranscript);
+    const savedQuestions = [];
+    const now = Date.now();
+
+    for (const q of generatedQuestions) {
+      const questionId = `q_${now}_${Math.random().toString(36).substring(2, 7)}`;
+      const questionObj = {
+        id: questionId,
+        text: q.text || 'Megértési ellenőrző kérdés',
+        options: Array.isArray(q.options) && q.options.length === 4 ? q.options : [
+          q.options?.[0] || 'Elsődleges megállapítás',
+          q.options?.[1] || 'Alternatív elmélet',
+          q.options?.[2] || 'Eltérő állítás',
+          q.options?.[3] || 'Egyik sem'
+        ],
+        correctIndex: typeof q.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex < 4 ? q.correctIndex : 0,
+        explanation: q.explanation || 'Az elhangzottak alapján.',
+        approved: false,
+        timestamp: now,
+      };
+
+      try {
+        await c.env.LECTURE_KV.put(
+          `questions:${roomId}:${questionId}`,
+          JSON.stringify(questionObj),
+          { expirationTtl: 86400 }
+        );
+      } catch (e) {}
+
+      savedQuestions.push(questionObj);
+
+      broadcastToRoom(
+        roomId,
+        {
+          event: 'NEW_QUESTION_PENDING',
+          questionObject: questionObj,
+        },
+        'teacher'
+      );
+    }
+
+    return c.json({
+      success: true,
+      roomId,
+      cleanTranscript,
+      questions: savedQuestions
+    });
+  } catch (err: any) {
+    return c.json({ error: 'Kérdésgenerálási hiba', details: err.message }, 500);
+  }
+});
+
+// 3. WebSocket Real-time Endpoint
 app.get('/ws/room/:roomId', async (c) => {
   const roomId = c.req.param('roomId');
   const role = (c.req.query('role') === 'teacher' ? 'teacher' : 'student') as 'teacher' | 'student';
@@ -432,7 +534,7 @@ app.get('/ws/room/:roomId', async (c) => {
   });
 });
 
-// 3. Fallback / Static Assets Route
+// 4. Fallback / Static Assets Route
 app.get('*', async (c) => {
   if (c.env.ASSETS) {
     return c.env.ASSETS.fetch(c.req.raw);
