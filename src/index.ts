@@ -135,56 +135,46 @@ RULES:
   return fixHungarianSpelling(rawTranscript);
 }
 
-// Helper to generate universal high-quality multiple choice questions in Hungarian with structured 5-question sequence
+// Helper to generate universal high-quality multiple choice questions in Hungarian strictly from transcript
 async function generate5QuestionsWithAI(ai: any, cleanTranscript: string, topic?: string): Promise<any[]> {
-  const QUIZ_GEN_PROMPT = `You are a master university professor designing a 5-question comprehension quiz in Hungarian based on the lecture transcript.
+  const QUIZ_GEN_PROMPT = `You are a university professor designing a 5-question multiple-choice comprehension quiz in Hungarian based STRICTLY on the provided lecture transcript.
 ${topic ? `\nLECTURE TOPIC / SUBJECT: "${topic}"` : ''}
 
-STRICT 5-QUESTION SEQUENCE (YOU MUST GENERATE 5 REAL QUESTIONS IN THIS EXACT SEQUENCE):
+STRICT INSTRUCTIONS:
+1. Base ALL questions, options, and explanations ONLY on the factual contents of the user's transcript below.
+2. DO NOT use topics or sentences from other subjects. Analyze ONLY the user's transcript.
 
-1. QUESTION 1 (Összegző kérdés):
-   * Question Text MUST BE: "Miről volt eddig szó az előadásrészlet alapján?"
-   * Options MUST contain 4 real, distinct topic options summarizing what was discussed in the transcript.
+EXACT 5-QUESTION STRUCTURE:
+- Question 1 Text MUST BE: "Miről volt eddig szó az előadásrészlet alapján?" (Options must summarize the actual topic of the transcript).
+- Question 2 Text MUST BE: "Mi az elhangzott előadásrészlet legfőbb tézise?" (Options must summarize the main point of the transcript).
+- Question 3 Text MUST test a specific concept or term mentioned in the transcript.
+- Question 4 Text MUST test another concept or term mentioned in the transcript.
+- Question 5 Text MUST test a specific detail, fact, or statement from the transcript.
 
-2. QUESTION 2 (Fő tézis / Összegzés):
-   * Question Text MUST BE: "Mi az elhangzott előadásrészlet legfőbb tézise?"
-   * Options MUST contain 4 real, distinct thesis statements based on the transcript.
-
-3. QUESTION 3 (1. Fogalom / Szakkifejezés):
-   * Question Text MUST test a specific concept, term, definition, or proper name mentioned in the text (e.g. "Whig szemléletű értelmezés", "Dicsőséges forradalom").
-
-4. QUESTION 4 (2. Fogalom / Szakkifejezés):
-   * Question Text MUST test another specific concept, term, or definition from the text.
-
-5. QUESTION 5 (Részletkérdés):
-   * Question Text MUST test a specific detail, fact, date, or statement from the transcript.
-
-CRITICAL RULES:
-- ALL options must be REAL, SPECIFIC Hungarian sentences/statements from the transcript. NEVER output placeholders like "A fő téma", "A fő megállapítás", "A fogalom", or "Téves fogalom".
-- Output ONLY valid JSON matching this exact structure:
+JSON OUTPUT FORMAT:
 {
   "questions": [
     {
       "text": "Miről volt eddig szó az előadásrészlet alapján?",
       "options": [
-        "Az angol polgári forradalom és a Whig történeti értelmezés kialakulása",
-        "A francia abszolutizmus gazdasági reformjai",
-        "A német-római császárság vallásháborúi",
-        "Az amerikai függetlenségi nyilatkozat elfogadása"
+        "Correct Hungarian summary of the transcript topic",
+        "Plausible incorrect distractor A related to topic",
+        "Plausible incorrect distractor B related to topic",
+        "Plausible incorrect distractor C related to topic"
       ],
       "correctIndex": 0,
-      "explanation": "Az előadás az angol polgári forradalom történeti megközelítését tárgyalta."
+      "explanation": "Short Hungarian explanation based on transcript."
     },
     {
       "text": "Mi az elhangzott előadásrészlet legfőbb tézise?",
       "options": [
-        "A Whig szemlélet szerint az 1688-as forradalom a parlamentáris alkotmányosság alapja",
-        "A monarchia teljes eltörlése volt a forradalom egyetlen célja",
-        "A polgári átalakulás kizárólag külföldi katonai beavatkozás eredménye volt",
-        "Egyik sem a fentiek közül"
+        "Correct Hungarian statement of the transcript thesis",
+        "Plausible incorrect thesis distractor A",
+        "Plausible incorrect thesis distractor B",
+        "Plausible incorrect thesis distractor C"
       ],
       "correctIndex": 0,
-      "explanation": "Az előadás legfőbb tézise a Whig alkotmányos megközelítést emelte ki."
+      "explanation": "Short Hungarian explanation of main thesis."
     }
   ]
 }`;
@@ -227,9 +217,7 @@ CRITICAL RULES:
           batch.forEach((q: any) => {
             if (q.text && Array.isArray(q.options) && q.options.length === 4) {
               const cleanText = q.text.trim();
-              // Filter out any placeholder options
-              const isPlaceholder = q.options.some((opt: string) => /fő téma|fő megállapítás|téves fogalom|helyes tény|helyes válasz|tévesztő/i.test(opt));
-              if (!isPlaceholder && !questions.some((ex: any) => ex.text === cleanText)) {
+              if (!questions.some((ex: any) => ex.text === cleanText)) {
                 q.options = q.options.map((opt: string) => sanitizeOptionText(opt));
                 questions.push(q);
               }
@@ -242,11 +230,8 @@ CRITICAL RULES:
               try {
                 const q = JSON.parse(m);
                 if (q.text && q.options && Array.isArray(q.options) && q.options.length === 4) {
-                  const isPlaceholder = q.options.some((opt: string) => /fő téma|fő megállapítás|téves fogalom|helyes tény|helyes válasz|tévesztő/i.test(opt));
-                  if (!isPlaceholder) {
-                    q.options = q.options.map((opt: string) => sanitizeOptionText(opt));
-                    questions.push(q);
-                  }
+                  q.options = q.options.map((opt: string) => sanitizeOptionText(opt));
+                  questions.push(q);
                 }
               } catch (e) {}
             }
@@ -276,7 +261,7 @@ CRITICAL RULES:
       options: [
         firstSentence.substring(0, 55),
         "Általános adminisztratív közleményekről és szervezési szabályzatról",
-        "Jogszabályi és elméleti keretek eltérő történeti megközelítéseiről",
+        "Környezetvédelmi és elméleti keretek eltérő megközelítéseiről",
         "Egyik sem a fentiek közül"
       ],
       correctIndex: 0,
