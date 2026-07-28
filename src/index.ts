@@ -140,41 +140,48 @@ async function generate5QuestionsWithAI(ai: any, cleanTranscript: string, topic?
   const QUIZ_GEN_PROMPT = `You are a university professor designing a 5-question multiple-choice comprehension quiz in Hungarian based STRICTLY on the provided lecture transcript.
 ${topic ? `\nLECTURE TOPIC / SUBJECT: "${topic}"` : ''}
 
-STRICT INSTRUCTIONS:
-1. Base ALL questions, options, and explanations ONLY on the factual contents of the user's transcript below.
-2. DO NOT use topics or sentences from other subjects. Analyze ONLY the user's transcript.
+STRICT 5-QUESTION DIVERSITY RULES (EACH OF THE 5 QUESTIONS MUST BE UNIQUE AND TEST DIFFERENT ASPECTS):
 
-EXACT 5-QUESTION STRUCTURE:
-- Question 1 Text MUST BE: "Miről volt eddig szó az előadásrészlet alapján?" (Options must summarize the actual topic of the transcript).
-- Question 2 Text MUST BE: "Mi az elhangzott előadásrészlet legfőbb tézise?" (Options must summarize the main point of the transcript).
-- Question 3 Text MUST test a specific concept or term mentioned in the transcript.
-- Question 4 Text MUST test another concept or term mentioned in the transcript.
-- Question 5 Text MUST test a specific detail, fact, or statement from the transcript.
+- Question 1 Text MUST BE: "Miről volt eddig szó az előadásrészlet alapján?" (Overview topic).
+- Question 2 Text MUST BE: "Mi az elhangzott előadásrészlet legfőbb tézise?" (Main thesis).
+- Question 3 Text MUST test Concept #1 (e.g. "Melyik szakkifejezés írja le...").
+- Question 4 Text MUST test Concept #2 or a key event (e.g. "Mi a szerepe a leiratban említett alábbi tényezőnek...").
+- Question 5 Text MUST test a specific detail, fact, date, or statement (e.g. "Melyik konkrét megállapítás hangzott el...").
 
-JSON OUTPUT FORMAT:
+CRITICAL DEDUPLICATION REQUIREMENT:
+- EVERY QUESTION TEXT MUST BE COMPLETELY DIFFERENT. NEVER repeat the same question phrasing or concept across multiple questions.
+- Output ONLY valid JSON matching this exact structure:
 {
   "questions": [
     {
       "text": "Miről volt eddig szó az előadásrészlet alapján?",
-      "options": [
-        "Correct Hungarian summary of the transcript topic",
-        "Plausible incorrect distractor A related to topic",
-        "Plausible incorrect distractor B related to topic",
-        "Plausible incorrect distractor C related to topic"
-      ],
+      "options": ["Correct Hungarian summary", "Distractor A", "Distractor B", "Distractor C"],
       "correctIndex": 0,
       "explanation": "Short Hungarian explanation based on transcript."
     },
     {
       "text": "Mi az elhangzott előadásrészlet legfőbb tézise?",
-      "options": [
-        "Correct Hungarian statement of the transcript thesis",
-        "Plausible incorrect thesis distractor A",
-        "Plausible incorrect thesis distractor B",
-        "Plausible incorrect thesis distractor C"
-      ],
+      "options": ["Correct thesis statement", "Distractor A", "Distractor B", "Distractor C"],
       "correctIndex": 0,
-      "explanation": "Short Hungarian explanation of main thesis."
+      "explanation": "Short Hungarian explanation."
+    },
+    {
+      "text": "Melyik szakkifejezés írja le...",
+      "options": ["Correct concept", "Distractor A", "Distractor B", "Distractor C"],
+      "correctIndex": 0,
+      "explanation": "Short Hungarian explanation."
+    },
+    {
+      "text": "Mi a szerepe a leiratban említett...",
+      "options": ["Correct factor role", "Distractor A", "Distractor B", "Distractor C"],
+      "correctIndex": 0,
+      "explanation": "Short Hungarian explanation."
+    },
+    {
+      "text": "Melyik konkrét megállapítás hangzott el...",
+      "options": ["Correct factual detail", "Distractor A", "Distractor B", "Distractor C"],
+      "correctIndex": 0,
+      "explanation": "Short Hungarian explanation."
     }
   ]
 }`;
@@ -217,7 +224,12 @@ JSON OUTPUT FORMAT:
           batch.forEach((q: any) => {
             if (q.text && Array.isArray(q.options) && q.options.length === 4) {
               const cleanText = q.text.trim();
-              if (!questions.some((ex: any) => ex.text === cleanText)) {
+              const prefix = cleanText.toLowerCase().substring(0, 20);
+              // Strict deduplication: check exact text or 20-character prefix match
+              const isDuplicate = questions.some((ex: any) => 
+                ex.text === cleanText || (prefix.length > 8 && ex.text.toLowerCase().substring(0, 20) === prefix)
+              );
+              if (!isDuplicate) {
                 q.options = q.options.map((opt: string) => sanitizeOptionText(opt));
                 questions.push(q);
               }
@@ -230,8 +242,15 @@ JSON OUTPUT FORMAT:
               try {
                 const q = JSON.parse(m);
                 if (q.text && q.options && Array.isArray(q.options) && q.options.length === 4) {
-                  q.options = q.options.map((opt: string) => sanitizeOptionText(opt));
-                  questions.push(q);
+                  const cleanText = q.text.trim();
+                  const prefix = cleanText.toLowerCase().substring(0, 20);
+                  const isDuplicate = questions.some((ex: any) => 
+                    ex.text === cleanText || (prefix.length > 8 && ex.text.toLowerCase().substring(0, 20) === prefix)
+                  );
+                  if (!isDuplicate) {
+                    q.options = q.options.map((opt: string) => sanitizeOptionText(opt));
+                    questions.push(q);
+                  }
                 }
               } catch (e) {}
             }
@@ -253,20 +272,77 @@ JSON OUTPUT FORMAT:
     questions[1].text = `Mi az elhangzott előadásrészlet legfőbb tézise?`;
   }
 
-  // Real factual fallback if parsing produced no questions
-  if (questions.length === 0 && cleanTranscript.length > 5) {
-    const firstSentence = cleanTranscript.split('.')[0] || cleanTranscript;
-    questions.push({
-      text: `Miről volt eddig szó az előadásrészlet alapján?`,
-      options: [
-        firstSentence.substring(0, 55),
-        "Általános adminisztratív közleményekről és szervezési szabályzatról",
-        "Környezetvédelmi és elméleti keretek eltérő megközelítéseiről",
-        "Egyik sem a fentiek közül"
-      ],
-      correctIndex: 0,
-      explanation: "Közvetlenül az elhangzott előadásrészlet tézisét tükrözi."
-    });
+  // Guaranteed 5-question completion fallback if LLM generated fewer than 5 unique questions
+  const sentences = cleanTranscript.split(/[.!?]+/).map(s => s.trim()).filter(Boolean);
+  const mainTopic = sentences[0] || cleanTranscript;
+  const secondaryTopic = sentences[1] || mainTopic;
+
+  if (questions.length < 5) {
+    const defaultTemplates = [
+      {
+        text: "Miről volt eddig szó az előadásrészlet alapján?",
+        options: [
+          mainTopic.substring(0, 60),
+          "Általános igazgatási és szervezeti közleményekről",
+          "Nemzetközi gazdasági és jogi szabályozásokról",
+          "Egyik sem a fentiek közül"
+        ],
+        correctIndex: 0,
+        explanation: "Közvetlenül az elhangzott előadásrészlet témájára utal."
+      },
+      {
+        text: "Mi az elhangzott előadásrészlet legfőbb tézise?",
+        options: [
+          secondaryTopic.substring(0, 60),
+          "Az előadás témájának teljes elvetése és kritikája",
+          "Eltérő elméleti megközelítés a témában",
+          "Egyik sem a fentiek közül"
+        ],
+        correctIndex: 0,
+        explanation: "Az elhangzottak központi tézisét tükrözi."
+      },
+      {
+        text: `Melyik szakkifejezés emelkedik ki az alábbi előadásrészletből: "${mainTopic.substring(0, 35)}..."?`,
+        options: [
+          mainTopic.substring(0, 50),
+          "Korábbi elméleti megközelítések",
+          "Általános módszertani keretek",
+          "Külföldi szakirodalmi hivatkozások"
+        ],
+        correctIndex: 0,
+        explanation: "Közvetlenül az elhangzottak szakkifejezéseire épül."
+      },
+      {
+        text: "Mi a szerepe az előadásban említett tényezőknek és összefüggéseknek?",
+        options: [
+          "A megadott témakör mélyebb megértésének elősegítése",
+          "A téma figyelmen kívül hagyása",
+          "Másik tudományág módszereinek alkalmazása",
+          "Egyik sem a fentiek közül"
+        ],
+        correctIndex: 0,
+        explanation: "Az elhangzottak összefüggéseit elemzi."
+      },
+      {
+        text: "Melyik konkrét megállapítás igaz az elhangzottak alapján?",
+        options: [
+          mainTopic.substring(0, 55),
+          "A leírt tények ellenkezője igaz",
+          "A témában nem történt részletes vizsgálat",
+          "Egyik sem a fentiek közül"
+        ],
+        correctIndex: 0,
+        explanation: "Az elhangzott tényekből következik."
+      }
+    ];
+
+    for (const tmpl of defaultTemplates) {
+      if (questions.length >= 5) break;
+      const prefix = tmpl.text.toLowerCase().substring(0, 20);
+      if (!questions.some(q => q.text.toLowerCase().substring(0, 20) === prefix)) {
+        questions.push(tmpl);
+      }
+    }
   }
 
   return questions;
