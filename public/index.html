@@ -1162,11 +1162,21 @@
     const submitAnswerBtn = document.getElementById('submitAnswerBtn');
     const submissionFeedback = document.getElementById('submissionFeedback');
 
+    // Load saved submitted question IDs for student
+    try {
+      const savedSubmitted = localStorage.getItem('doxi_submitted_' + currentRoom);
+      if (savedSubmitted) {
+        studentSubmittedQuestions = new Set(JSON.parse(savedSubmitted));
+      }
+    } catch (e) {}
+
     function renderStudentQuestions(list) {
       const container = document.getElementById('studentQuestionsContainer');
       const idleState = document.getElementById('studentIdleState');
 
-      if (!list || list.length === 0) {
+      const unansweredList = (list || []).filter(q => !studentSubmittedQuestions.has(q.id));
+
+      if (!unansweredList || unansweredList.length === 0) {
         container.classList.add('hidden');
         idleState.classList.remove('hidden');
         return;
@@ -1176,15 +1186,14 @@
       container.classList.remove('hidden');
       container.replaceChildren();
 
-      list.forEach((q, qIndex) => {
+      unansweredList.forEach((q, qIndex) => {
         const card = document.createElement('div');
-        const isSubmitted = studentSubmittedQuestions.has(q.id);
 
-        card.className = 'bg-white border border-indigo-200 rounded-3xl p-6 space-y-4 shadow-md';
+        card.className = 'bg-white border border-indigo-200 rounded-3xl p-6 space-y-4 shadow-md transition-all duration-300';
         card.innerHTML = `
           <div class="flex items-center justify-between border-b border-slate-100 pb-3">
             <span class="text-xs font-bold uppercase tracking-wider text-indigo-700">${qIndex + 1}. Megértési Kérdés</span>
-            <span class="text-[11px] px-2.5 py-0.5 rounded-full ${isSubmitted ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-indigo-50 text-indigo-700 border border-indigo-200'} font-mono">${isSubmitted ? '✓ Elküldve' : 'Aktív'}</span>
+            <span class="text-[11px] px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono">Aktív</span>
           </div>
 
           <div>
@@ -1195,27 +1204,23 @@
             <div class="space-y-2.5">
               ${q.options.map((opt, idx) => `
                 <label class="flex items-center gap-3 p-3.5 rounded-xl bg-slate-50 border border-slate-200 hover:border-indigo-400 hover:bg-white cursor-pointer transition text-sm text-slate-800 font-medium">
-                  <input type="radio" name="quizOption_${q.id}" value="${idx}" ${isSubmitted ? 'disabled' : ''} class="w-4 h-4 text-indigo-600 bg-white border-slate-300 focus:ring-indigo-500">
+                  <input type="radio" name="quizOption_${q.id}" value="${idx}" class="w-4 h-4 text-indigo-600 bg-white border-slate-300 focus:ring-indigo-500">
                   <span class="font-bold text-slate-500 w-5">${String.fromCharCode(65 + idx)}:</span>
                   <span class="flex-1">${escapeHtml(opt)}</span>
                 </label>
               `).join('')}
             </div>
 
-            <button type="submit" id="btn_${q.id}" ${isSubmitted ? 'disabled' : ''} class="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-xs rounded-xl shadow-sm transition mt-4">
-              ${isSubmitted ? 'Válasz Elküldve' : 'Válasz Elküldése'}
+            <button type="submit" id="btn_${q.id}" class="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-sm transition mt-4 flex items-center justify-center gap-2">
+              Válasz Elküldése
             </button>
           </form>
-
-          <div id="feedback_${q.id}" class="${isSubmitted ? '' : 'hidden'} p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs text-center font-medium">
-            ✓ Válaszod erre a kérdésre rögzítve lett!
-          </div>
         `;
 
         container.appendChild(card);
 
         const form = card.querySelector(`#form_${q.id}`);
-        form.addEventListener('submit', (e) => {
+        form.addEventListener('submit', async (e) => {
           e.preventDefault();
           const selected = form.querySelector(`input[name="quizOption_${q.id}"]:checked`);
           if (!selected) return;
@@ -1223,16 +1228,15 @@
           const choiceIndex = parseInt(selected.value, 10);
           studentSubmittedQuestions.add(q.id);
 
-          const inputs = form.querySelectorAll('input');
-          inputs.forEach(i => i.disabled = true);
+          try {
+            localStorage.setItem('doxi_submitted_' + currentRoom, JSON.stringify(Array.from(studentSubmittedQuestions)));
+          } catch (err) {}
 
           const submitBtn = form.querySelector(`#btn_${q.id}`);
           submitBtn.disabled = true;
-          submitBtn.textContent = 'Válasz Elküldve';
+          submitBtn.textContent = 'Elküldve!';
 
-          const feedback = card.querySelector(`#feedback_${q.id}`);
-          feedback.classList.remove('hidden');
-
+          // Send via WebSocket first
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
               event: 'SUBMIT_ANSWER',
@@ -1241,6 +1245,25 @@
               studentId
             }));
           }
+
+          // REST fallback to guarantee delivery
+          try {
+            fetch(`/api/room/${encodeURIComponent(currentRoom)}/submit-answer`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                questionId: q.id,
+                choiceIndex,
+                studentId
+              })
+            });
+          } catch (err) {}
+
+          // Remove answered question card immediately from student view
+          card.classList.add('opacity-0', 'scale-95');
+          setTimeout(() => {
+            renderStudentQuestions(activeQuestionsList);
+          }, 250);
         });
       });
     }
