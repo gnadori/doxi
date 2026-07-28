@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "live-lecture-quiz",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-09-25",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "LECTURE_KV",
+      "id": "LECTURE_KV_ID"
+    }
+  ],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  }
+}

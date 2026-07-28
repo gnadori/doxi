@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LiveLectureQuiz - Real-Time AI Assessment</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              400: '#818cf8',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .glass-card {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .pulse-ring {
+      animation: pulse-ring 2s cubic-bezier(0.455, 0.03, 0.515, 0.955) infinite;
+    }
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.05); opacity: 0.4; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+  </style>
+</head>
+<body class="h-full flex flex-col font-sans antialiased bg-slate-950 text-slate-100 selection:bg-brand-500 selection:text-white">
+
+  <!-- Header Navigation -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="h-9 w-9 rounded-xl bg-gradient-to-tr from-brand-600 to-violet-500 flex items-center justify-center font-bold text-white shadow-lg shadow-brand-500/20">
+          ⚡
+        </div>
+        <div>
+          <span class="font-bold text-lg tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">LiveLectureQuiz</span>
+          <span class="text-xs px-2 py-0.5 ml-2 rounded-full bg-slate-800 border border-slate-700 text-slate-400 font-mono">Edge AI</span>
+        </div>
+      </div>
+
+      <!-- Room & Role Switcher Bar -->
+      <div class="flex items-center space-x-3">
+        <div class="hidden sm:flex items-center space-x-2 text-xs bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5">
+          <span class="text-slate-400">Room:</span>
+          <input type="text" id="roomInput" value="room_101" class="bg-transparent font-mono font-semibold text-brand-400 border-none outline-none w-24 text-center focus:ring-0">
+          <button id="updateRoomBtn" class="text-slate-400 hover:text-white transition">✓</button>
+        </div>
+
+        <div id="roleToggle" class="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-medium">
+          <button id="setStudentRoleBtn" class="px-3 py-1.5 rounded-lg transition text-slate-400 hover:text-white">Student</button>
+          <button id="setTeacherRoleBtn" class="px-3 py-1.5 rounded-lg transition text-slate-400 hover:text-white">Teacher</button>
+        </div>
+
+        <!-- Connection Status Badge -->
+        <div id="wsStatusBadge" class="flex items-center space-x-1.5 text-xs px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 font-mono">
+          <span class="h-2 w-2 rounded-full bg-amber-400 animate-pulse"></span>
+          <span id="wsStatusText">Connecting</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+
+    <!-- ================= TEACHER DASHBOARD VIEW ================= -->
+    <div id="teacherView" class="hidden space-y-6">
+      <!-- Top Stats Bar -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        
+        <!-- Audio Chunk Engine Control -->
+        <div class="glass-card rounded-2xl p-5 relative overflow-hidden flex flex-col justify-between">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
+              🎙️ Audio Engine
+              <span id="recordingBadge" class="hidden text-xs px-2 py-0.5 rounded-full bg-red-500/20 border border-red-500/30 text-red-400 font-mono flex items-center gap-1">
+                <span class="h-1.5 w-1.5 rounded-full bg-red-500 animate-ping"></span> Live 5m Slicing
+              </span>
+            </h3>
+            <span id="chunkTimer" class="font-mono text-xs text-slate-500">00:00</span>
+          </div>
+
+          <div class="space-y-3">
+            <div class="flex gap-2">
+              <button id="startMicBtn" class="flex-1 py-2.5 px-4 bg-brand-600 hover:bg-brand-500 active:bg-brand-700 text-white font-medium text-xs rounded-xl shadow-lg shadow-brand-600/30 transition flex items-center justify-center gap-2">
+                <span>Start Mic Stream</span>
+              </button>
+              <button id="stopMicBtn" disabled class="py-2.5 px-4 bg-slate-800 opacity-50 hover:bg-slate-700 text-slate-300 font-medium text-xs rounded-xl transition">
+                Stop
+              </button>
+            </div>
+            
+            <!-- Quick Test Trigger for instant demonstration -->
+            <div class="border-t border-slate-800/80 pt-3">
+              <label class="text-[11px] text-slate-400 block mb-1">Instant Demo Trigger (Optional Text Input)</label>
+              <div class="flex gap-2">
+                <input type="text" id="sampleTextPrompt" placeholder="e.g. Mitochondria is the powerhouse of the cell..." class="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs focus:border-brand-500 focus:outline-none text-slate-200">
+                <button id="sendSampleTextBtn" class="py-1.5 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium text-xs rounded-lg transition border border-slate-700 flex items-center gap-1">
+                  <span>⚡ AI Check</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Room Summary -->
+        <div class="glass-card rounded-2xl p-5 flex flex-col justify-between">
+          <div class="flex justify-between items-start">
+            <div>
+              <p class="text-xs font-medium text-slate-400">Current Room Code</p>
+              <h2 id="teacherRoomCode" class="text-3xl font-bold font-mono text-white mt-1">room_101</h2>
+            </div>
+            <span class="text-2xl">🏫</span>
+          </div>
+          <div class="text-xs text-slate-400 flex items-center justify-between border-t border-slate-800 pt-3">
+            <span>Share URL with students:</span>
+            <button id="copyStudentLinkBtn" class="text-brand-400 hover:underline">Copy Link</button>
+          </div>
+        </div>
+
+        <!-- Active Status -->
+        <div class="glass-card rounded-2xl p-5 flex flex-col justify-between">
+          <div class="flex justify-between items-start">
+            <div>
+              <p class="text-xs font-medium text-slate-400">Review Queue</p>
+              <h2 id="pendingCountDisplay" class="text-3xl font-bold text-amber-400 mt-1">0</h2>
+            </div>
+            <span class="text-2xl">⏳</span>
+          </div>
+          <p class="text-xs text-slate-400 border-t border-slate-800 pt-3">
+            AI generated questions will appear below for approval.
+          </p>
+        </div>
+
+      </div>
+
+      <!-- Main Teacher Dashboard Workspace (Split Review Queue & Live Histogram) -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <!-- AI Pending Review Queue -->
+        <div class="glass-card rounded-2xl p-6 flex flex-col h-[500px]">
+          <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
+            <h3 class="font-bold text-slate-200 flex items-center gap-2">
+              <span>📋 Question Review Queue</span>
+              <span id="queueBadge" class="bg-amber-500/20 text-amber-400 text-xs px-2 py-0.5 rounded-full border border-amber-500/30">0 pending</span>
+            </h3>
+          </div>
+
+          <div id="pendingQuestionsList" class="flex-1 overflow-y-auto space-y-4 pr-1">
+            <!-- Empty state -->
+            <div id="emptyQueueMsg" class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500">
+              <div class="text-4xl mb-3 opacity-60">🧠</div>
+              <p class="text-sm font-medium text-slate-400">No pending questions in queue</p>
+              <p class="text-xs text-slate-500 mt-1 max-w-xs">Start recording lecture mic stream or click 'AI Check' to generate questions.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Response Histogram Bar Chart -->
+        <div class="glass-card rounded-2xl p-6 flex flex-col h-[500px]">
+          <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-800">
+            <div>
+              <h3 class="font-bold text-slate-200 flex items-center gap-2">
+                <span>📊 Live Student Responses</span>
+              </h3>
+              <p id="activeQuestionTitle" class="text-xs text-slate-400 mt-0.5">No question currently active</p>
+            </div>
+            <button id="closeQuestionBtn" disabled class="py-1.5 px-3 bg-slate-800 opacity-50 text-slate-400 text-xs rounded-lg transition border border-slate-700 hover:text-white">
+              Close Question
+            </button>
+          </div>
+
+          <div class="flex-1 flex flex-col justify-between">
+            <!-- Dynamic Bar Chart -->
+            <div id="histogramContainer" class="flex-1 flex items-end gap-4 pt-6 pb-2 px-4">
+              <!-- Bar A -->
+              <div class="flex-1 flex flex-col items-center h-full justify-end group">
+                <span id="countA" class="text-xs font-mono text-slate-400 mb-1">0</span>
+                <div class="w-full bg-slate-900 rounded-t-xl overflow-hidden flex items-end h-[80%] p-1 border border-slate-800">
+                  <div id="barA" class="w-full bg-brand-500 rounded-t-lg transition-all duration-500 h-[0%]"></div>
+                </div>
+                <span class="text-xs font-semibold text-slate-300 mt-2">A</span>
+              </div>
+              <!-- Bar B -->
+              <div class="flex-1 flex flex-col items-center h-full justify-end group">
+                <span id="countB" class="text-xs font-mono text-slate-400 mb-1">0</span>
+                <div class="w-full bg-slate-900 rounded-t-xl overflow-hidden flex items-end h-[80%] p-1 border border-slate-800">
+                  <div id="barB" class="w-full bg-violet-500 rounded-t-lg transition-all duration-500 h-[0%]"></div>
+                </div>
+                <span class="text-xs font-semibold text-slate-300 mt-2">B</span>
+              </div>
+              <!-- Bar C -->
+              <div class="flex-1 flex flex-col items-center h-full justify-end group">
+                <span id="countC" class="text-xs font-mono text-slate-400 mb-1">0</span>
+                <div class="w-full bg-slate-900 rounded-t-xl overflow-hidden flex items-end h-[80%] p-1 border border-slate-800">
+                  <div id="barC" class="w-full bg-emerald-500 rounded-t-lg transition-all duration-500 h-[0%]"></div>
+                </div>
+                <span class="text-xs font-semibold text-slate-300 mt-2">C</span>
+              </div>
+              <!-- Bar D -->
+              <div class="flex-1 flex flex-col items-center h-full justify-end group">
+                <span id="countD" class="text-xs font-mono text-slate-400 mb-1">0</span>
+                <div class="w-full bg-slate-900 rounded-t-xl overflow-hidden flex items-end h-[80%] p-1 border border-slate-800">
+                  <div id="barD" class="w-full bg-amber-500 rounded-t-lg transition-all duration-500 h-[0%]"></div>
+                </div>
+                <span class="text-xs font-semibold text-slate-300 mt-2">D</span>
+              </div>
+            </div>
+
+            <!-- Stats Footer -->
+            <div class="border-t border-slate-800 pt-3 flex items-center justify-between text-xs text-slate-400">
+              <span>Total Answers: <strong id="totalAnswersCount" class="text-white">0</strong></span>
+              <span id="histogramStatusText">Waiting for question push...</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+
+    <!-- ================= STUDENT CLIENT VIEW ================= -->
+    <div id="studentView" class="max-w-xl mx-auto space-y-6">
+
+      <!-- Student ID Header -->
+      <div class="glass-card rounded-2xl p-4 flex items-center justify-between text-xs">
+        <div class="flex items-center gap-2">
+          <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+          <span class="text-slate-400">Student ID:</span>
+          <span id="studentIdDisplay" class="font-mono text-slate-200">anon_xxxx</span>
+        </div>
+        <div class="text-slate-400 font-mono" id="studentRoomDisplay">
+          Room: room_101
+        </div>
+      </div>
+
+      <!-- State 1: Idle Listening State -->
+      <div id="studentIdleState" class="glass-card rounded-3xl p-8 text-center space-y-6">
+        <div class="relative w-28 h-28 mx-auto flex items-center justify-center">
+          <div class="absolute inset-0 rounded-full bg-brand-500/20 pulse-ring"></div>
+          <div class="relative z-10 w-20 h-20 rounded-full bg-gradient-to-tr from-brand-600 to-violet-600 flex items-center justify-center text-3xl shadow-xl shadow-brand-500/30">
+            👂
+          </div>
+        </div>
+        <div>
+          <h2 class="text-xl font-bold text-white tracking-tight">Listening to Lecture...</h2>
+          <p class="text-xs text-slate-400 mt-2 max-w-sm mx-auto leading-relaxed">
+            Stay tuned! As soon as the teacher approves an attention check question, it will pop up right here automatically.
+          </p>
+        </div>
+      </div>
+
+      <!-- State 2: Active Question Form -->
+      <div id="studentActiveState" class="hidden glass-card rounded-3xl p-6 space-y-6 border border-brand-500/30 shadow-2xl shadow-brand-500/10">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <span class="text-xs font-semibold uppercase tracking-wider text-brand-400">Attention Check</span>
+          <span class="text-xs px-2.5 py-0.5 rounded-full bg-brand-500/20 text-brand-300 font-mono">Live</span>
+        </div>
+
+        <div>
+          <h3 id="questionText" class="text-lg font-bold text-white leading-snug">
+            Question loading...
+          </h3>
+        </div>
+
+        <form id="quizForm" class="space-y-3">
+          <div id="optionsContainer" class="space-y-2.5">
+            <!-- Options dynamically populated -->
+          </div>
+
+          <button type="submit" id="submitAnswerBtn" disabled class="w-full py-3.5 px-4 bg-brand-600 hover:bg-brand-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm rounded-xl shadow-lg shadow-brand-600/30 transition mt-4">
+            Submit Answer
+          </button>
+        </form>
+
+        <!-- Feedback alert -->
+        <div id="submissionFeedback" class="hidden p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs text-center font-medium">
+          ✓ Answer submitted! Waiting for the next question.
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <script>
+    // System State & Setup
+    const urlParams = new URLSearchParams(window.location.search);
+    let currentRole = urlParams.get('role') === 'teacher' ? 'teacher' : 'student';
+    let currentRoom = urlParams.get('room') || 'room_101';
+
+    // Anonymous Student ID
+    let studentId = localStorage.getItem('llq_student_id');
+    if (!studentId) {
+      studentId = 'anon_' + Math.random().toString(36).substring(2, 8);
+      localStorage.setItem('llq_student_id', studentId);
+    }
+    document.getElementById('studentIdDisplay').textContent = studentId;
+
+    // Active Question & Pending Store
+    let activeQuestion = null;
+    let pendingQuestions = [];
+
+    // DOM Elements
+    const roomInput = document.getElementById('roomInput');
+    const updateRoomBtn = document.getElementById('updateRoomBtn');
+    const wsStatusText = document.getElementById('wsStatusText');
+    const wsStatusBadge = document.getElementById('wsStatusBadge');
+    
+    const teacherView = document.getElementById('teacherView');
+    const studentView = document.getElementById('studentView');
+    const setTeacherRoleBtn = document.getElementById('setTeacherRoleBtn');
+    const setStudentRoleBtn = document.getElementById('setStudentRoleBtn');
+
+    roomInput.value = currentRoom;
+    document.getElementById('teacherRoomCode').textContent = currentRoom;
+    document.getElementById('studentRoomDisplay').textContent = 'Room: ' + currentRoom;
+
+    // Switch Role UI state
+    function updateRoleUI() {
+      if (currentRole === 'teacher') {
+        teacherView.classList.remove('hidden');
+        studentView.classList.add('hidden');
+        setTeacherRoleBtn.className = "px-3 py-1.5 rounded-lg transition bg-brand-600 text-white font-semibold shadow-sm";
+        setStudentRoleBtn.className = "px-3 py-1.5 rounded-lg transition text-slate-400 hover:text-white";
+      } else {
+        teacherView.classList.add('hidden');
+        studentView.classList.remove('hidden');
+        setStudentRoleBtn.className = "px-3 py-1.5 rounded-lg transition bg-brand-600 text-white font-semibold shadow-sm";
+        setTeacherRoleBtn.className = "px-3 py-1.5 rounded-lg transition text-slate-400 hover:text-white";
+      }
+    }
+    updateRoleUI();
+
+    setTeacherRoleBtn.addEventListener('click', () => {
+      currentRole = 'teacher';
+      updateURL();
+      updateRoleUI();
+      connectWebSocket();
+    });
+
+    setStudentRoleBtn.addEventListener('click', () => {
+      currentRole = 'student';
+      updateURL();
+      updateRoleUI();
+      connectWebSocket();
+    });
+
+    updateRoomBtn.addEventListener('click', () => {
+      currentRoom = roomInput.value.trim() || 'room_101';
+      document.getElementById('teacherRoomCode').textContent = currentRoom;
+      document.getElementById('studentRoomDisplay').textContent = 'Room: ' + currentRoom;
+      updateURL();
+      connectWebSocket();
+    });
+
+    function updateURL() {
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.set('role', currentRole);
+      newUrl.searchParams.set('room', currentRoom);
+      window.history.pushState({}, '', newUrl);
+    }
+
+    // ================= WEBSOCKET ENGINE =================
+    let ws = null;
+    let reconnectAttempts = 0;
+
+    function connectWebSocket() {
+      if (ws) {
+        ws.close();
+      }
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws/room/${encodeURIComponent(currentRoom)}?role=${currentRole}`;
+
+      wsStatusText.textContent = 'Connecting...';
+      wsStatusBadge.className = 'flex items-center space-x-1.5 text-xs px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 font-mono';
+
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        reconnectAttempts = 0;
+        wsStatusText.textContent = 'Live Connected';
+        wsStatusBadge.className = 'flex items-center space-x-1.5 text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono';
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          handleWebSocketMessage(data);
+        } catch (err) {
+          console.error('Failed to parse WebSocket message:', err);
+        }
+      };
+
+      ws.onclose = () => {
+        wsStatusText.textContent = 'Disconnected';
+        wsStatusBadge.className = 'flex items-center space-x-1.5 text-xs px-2.5 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400 font-mono';
+        
+        // Exponential reconnect
+        reconnectAttempts++;
+        const timeout = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+        setTimeout(connectWebSocket, timeout);
+      };
+
+      ws.onerror = (err) => {
+        console.error('WebSocket error:', err);
+      };
+    }
+
+    function handleWebSocketMessage(data) {
+      console.log('WS Event received:', data);
+
+      if (data.event === 'NEW_QUESTION_PENDING') {
+        // Teacher received new question in review queue
+        if (currentRole === 'teacher' && data.questionObject) {
+          addQuestionToPendingQueue(data.questionObject);
+        }
+      } else if (data.event === 'APPROVE_QUESTION') {
+        // Broadcasted active question to students
+        activeQuestion = data.questionObject;
+        if (currentRole === 'student') {
+          renderStudentQuestion(activeQuestion);
+        } else {
+          renderTeacherActiveQuestion(activeQuestion);
+        }
+      } else if (data.event === 'SUBMIT_ANSWER') {
+        // Teacher receives answer statistics
+        if (currentRole === 'teacher') {
+          updateTeacherHistogram(data.counts || [0, 0, 0, 0], data.totalSubmissions || 0);
+        }
+      } else if (data.event === 'CLOSE_QUESTION') {
+        activeQuestion = null;
+        if (currentRole === 'student') {
+          resetStudentToIdle();
+        } else {
+          resetTeacherHistogram();
+        }
+      }
+    }
+
+    // ================= TEACHER LOGIC =================
+    function addQuestionToPendingQueue(q) {
+      pendingQuestions.push(q);
+      renderPendingQueue();
+    }
+
+    function renderPendingQueue() {
+      const container = document.getElementById('pendingQuestionsList');
+      const emptyMsg = document.getElementById('emptyQueueMsg');
+      const pendingCountDisplay = document.getElementById('pendingCountDisplay');
+      const queueBadge = document.getElementById('queueBadge');
+
+      pendingCountDisplay.textContent = pendingQuestions.length;
+      queueBadge.textContent = `${pendingQuestions.length} pending`;
+
+      if (pendingQuestions.length === 0) {
+        container.replaceChildren(emptyMsg);
+        return;
+      }
+
+      container.replaceChildren(); // Clear
+
+      pendingQuestions.forEach((q, index) => {
+        const card = document.createElement('div');
+        card.className = 'bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3';
+        
+        card.innerHTML = `
+          <div class="flex justify-between items-start">
+            <h4 class="font-bold text-sm text-slate-100">${escapeHtml(q.text)}</h4>
+            <span class="text-[10px] font-mono text-slate-500">AI Gen</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            ${q.options.map((opt, idx) => `
+              <div class="p-2 rounded-lg ${idx === q.correctIndex ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300' : 'bg-slate-950 border border-slate-800 text-slate-400'} font-medium">
+                ${String.fromCharCode(65 + idx)}: ${escapeHtml(opt)}
+              </div>
+            `).join('')}
+          </div>
+          <p class="text-[11px] text-slate-400 italic">💡 ${escapeHtml(q.explanation || '')}</p>
+          <div class="flex gap-2 pt-2 border-t border-slate-800">
+            <button onclick="approveQuestion(${index})" class="flex-1 py-2 px-3 bg-brand-600 hover:bg-brand-500 text-white font-medium text-xs rounded-lg transition shadow-md shadow-brand-600/20">
+              Approve & Push to Students
+            </button>
+            <button onclick="discardQuestion(${index})" class="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs rounded-lg transition">
+              Discard
+            </button>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    window.approveQuestion = function(index) {
+      const q = pendingQuestions[index];
+      if (!q) return;
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          event: 'APPROVE_QUESTION',
+          questionId: q.id
+        }));
+      }
+
+      pendingQuestions.splice(index, 1);
+      renderPendingQueue();
+    };
+
+    window.discardQuestion = function(index) {
+      pendingQuestions.splice(index, 1);
+      renderPendingQueue();
+    };
+
+    function renderTeacherActiveQuestion(q) {
+      document.getElementById('activeQuestionTitle').textContent = `Active: "${q.text}"`;
+      document.getElementById('closeQuestionBtn').disabled = false;
+      document.getElementById('closeQuestionBtn').classList.remove('opacity-50');
+      updateTeacherHistogram([0, 0, 0, 0], 0);
+    }
+
+    function updateTeacherHistogram(counts, total) {
+      document.getElementById('totalAnswersCount').textContent = total;
+      document.getElementById('countA').textContent = counts[0];
+      document.getElementById('countB').textContent = counts[1];
+      document.getElementById('countC').textContent = counts[2];
+      document.getElementById('countD').textContent = counts[3];
+
+      const max = Math.max(...counts, 1);
+      document.getElementById('barA').style.height = `${(counts[0] / max) * 100}%`;
+      document.getElementById('barB').style.height = `${(counts[1] / max) * 100}%`;
+      document.getElementById('barC').style.height = `${(counts[2] / max) * 100}%`;
+      document.getElementById('barD').style.height = `${(counts[3] / max) * 100}%`;
+
+      document.getElementById('histogramStatusText').textContent = total > 0 ? `${total} student(s) responded` : 'Awaiting student answers...';
+    }
+
+    function resetTeacherHistogram() {
+      document.getElementById('activeQuestionTitle').textContent = 'No question currently active';
+      document.getElementById('closeQuestionBtn').disabled = true;
+      document.getElementById('closeQuestionBtn').classList.add('opacity-50');
+      updateTeacherHistogram([0, 0, 0, 0], 0);
+      document.getElementById('histogramStatusText').textContent = 'Question closed.';
+    }
+
+    document.getElementById('closeQuestionBtn').addEventListener('click', () => {
+      if (activeQuestion && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          event: 'CLOSE_QUESTION',
+          questionId: activeQuestion.id
+        }));
+      }
+    });
+
+    // Copy Student Link
+    document.getElementById('copyStudentLinkBtn').addEventListener('click', () => {
+      const studentUrl = `${window.location.origin}/?room=${encodeURIComponent(currentRoom)}&role=student`;
+      navigator.clipboard.writeText(studentUrl);
+      alert('Student room URL copied to clipboard!');
+    });
+
+    // Mic Recording Engine
+    let mediaRecorder = null;
+    let audioInterval = null;
+    let secondsElapsed = 0;
+    let timerInterval = null;
+
+    const startMicBtn = document.getElementById('startMicBtn');
+    const stopMicBtn = document.getElementById('stopMicBtn');
+    const recordingBadge = document.getElementById('recordingBadge');
+    const chunkTimer = document.getElementById('chunkTimer');
+
+    startMicBtn.addEventListener('click', async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+
+        mediaRecorder.ondataavailable = async (e) => {
+          if (e.data.size > 0) {
+            sendAudioChunk(e.data);
+          }
+        };
+
+        // Slice every 300,000 ms (5 mins)
+        mediaRecorder.start(300000);
+
+        startMicBtn.disabled = true;
+        startMicBtn.classList.add('opacity-50');
+        stopMicBtn.disabled = false;
+        stopMicBtn.classList.remove('opacity-50');
+        recordingBadge.classList.remove('hidden');
+
+        secondsElapsed = 0;
+        timerInterval = setInterval(() => {
+          secondsElapsed++;
+          const mins = String(Math.floor(secondsElapsed / 60)).padStart(2, '0');
+          const secs = String(secondsElapsed % 60).padStart(2, '0');
+          chunkTimer.textContent = `${mins}:${secs}`;
+        }, 1000);
+
+      } catch (err) {
+        console.error('Error accessing microphone:', err);
+        alert('Could not access microphone. Please check browser permissions.');
+      }
+    });
+
+    stopMicBtn.addEventListener('click', () => {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        mediaRecorder.stream.getTracks().forEach(track => track.stop());
+      }
+      clearInterval(timerInterval);
+      startMicBtn.disabled = false;
+      startMicBtn.classList.remove('opacity-50');
+      stopMicBtn.disabled = true;
+      stopMicBtn.classList.add('opacity-50');
+      recordingBadge.classList.add('hidden');
+    });
+
+    async function sendAudioChunk(blob) {
+      try {
+        const formData = new FormData();
+        formData.append('audio', blob, 'chunk.webm');
+
+        const res = await fetch(`/api/room/${encodeURIComponent(currentRoom)}/audio`, {
+          method: 'POST',
+          body: formData
+        });
+        const json = await res.json();
+        console.log('Audio chunk response:', json);
+      } catch (err) {
+        console.error('Failed to upload audio chunk:', err);
+      }
+    }
+
+    // Instant Sample Text Trigger
+    document.getElementById('sendSampleTextBtn').addEventListener('click', async () => {
+      const text = document.getElementById('sampleTextPrompt').value.trim() || 'The mitochondria is the powerhouse of the cell, generating ATP through oxidative phosphorylation.';
+      try {
+        const formData = new FormData();
+        formData.append('text', text);
+
+        const res = await fetch(`/api/room/${encodeURIComponent(currentRoom)}/audio`, {
+          method: 'POST',
+          body: formData
+        });
+        const json = await res.json();
+        if (json.questions && json.questions.length > 0) {
+          alert(`Successfully generated ${json.questions.length} AI question(s)! Check the Review Queue.`);
+        }
+      } catch (err) {
+        console.error('Instant test trigger failed:', err);
+      }
+    });
+
+
+    // ================= STUDENT LOGIC =================
+    const studentIdleState = document.getElementById('studentIdleState');
+    const studentActiveState = document.getElementById('studentActiveState');
+    const optionsContainer = document.getElementById('optionsContainer');
+    const quizForm = document.getElementById('quizForm');
+    const submitAnswerBtn = document.getElementById('submitAnswerBtn');
+    const submissionFeedback = document.getElementById('submissionFeedback');
+
+    function renderStudentQuestion(q) {
+      studentIdleState.classList.add('hidden');
+      studentActiveState.classList.remove('hidden');
+      submissionFeedback.classList.add('hidden');
+      submitAnswerBtn.disabled = false;
+      submitAnswerBtn.textContent = 'Submit Answer';
+
+      document.getElementById('questionText').textContent = q.text;
+      optionsContainer.replaceChildren();
+
+      q.options.forEach((opt, idx) => {
+        const label = document.createElement('label');
+        label.className = 'flex items-center gap-3 p-3.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-brand-500/50 hover:bg-slate-850 cursor-pointer transition text-sm text-slate-200';
+        label.innerHTML = `
+          <input type="radio" name="quizOption" value="${idx}" class="w-4 h-4 text-brand-600 bg-slate-950 border-slate-700 focus:ring-brand-500">
+          <span class="font-bold text-slate-400 w-5">${String.fromCharCode(65 + idx)}:</span>
+          <span class="flex-1">${escapeHtml(opt)}</span>
+        `;
+        optionsContainer.appendChild(label);
+      });
+    }
+
+    quizForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const selected = document.querySelector('input[name="quizOption"]:checked');
+      if (!selected || !activeQuestion) return;
+
+      const choiceIndex = parseInt(selected.value, 10);
+
+      // Disable inputs to prevent double voting
+      const inputs = quizForm.querySelectorAll('input');
+      inputs.forEach(i => i.disabled = true);
+      submitAnswerBtn.disabled = true;
+      submitAnswerBtn.textContent = 'Submitted';
+      submissionFeedback.classList.remove('hidden');
+
+      // Send SUBMIT_ANSWER via WebSocket
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          event: 'SUBMIT_ANSWER',
+          questionId: activeQuestion.id,
+          choiceIndex,
+          studentId
+        }));
+      }
+    });
+
+    function resetStudentToIdle() {
+      studentActiveState.classList.add('hidden');
+      studentIdleState.classList.remove('hidden');
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, function(m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
+      });
+    }
+
+    // Connect WS on startup
+    connectWebSocket();
+  </script>
+</body>
+</html>
