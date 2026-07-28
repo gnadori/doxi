@@ -398,10 +398,29 @@
     let ws = null;
     let reconnectAttempts = 0;
 
+    async function fetchActiveQuestion() {
+      try {
+        const res = await fetch(`/api/room/${encodeURIComponent(currentRoom)}/active-question`);
+        const json = await res.json();
+        if (json && json.activeQuestion) {
+          activeQuestion = json.activeQuestion;
+          if (currentRole === 'student') {
+            renderStudentQuestion(activeQuestion);
+          } else {
+            renderTeacherActiveQuestion(activeQuestion);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to fetch active question:', e);
+      }
+    }
+
     function connectWebSocket() {
       if (ws) {
         ws.close();
       }
+
+      fetchActiveQuestion();
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/ws/room/${encodeURIComponent(currentRoom)}?role=${currentRole}`;

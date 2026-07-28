@@ -577,6 +577,26 @@ app.post('/api/room/:roomId/more-questions', async (c) => {
   }
 });
 
+// Active question lookup endpoint
+app.get('/api/room/:roomId/active-question', async (c) => {
+  const roomId = c.req.param('roomId');
+  try {
+    const rawSession = await c.env.LECTURE_KV.get(`session:${roomId}`);
+    if (rawSession) {
+      const session = JSON.parse(rawSession);
+      if (session && session.status === 'active' && session.currentQuestionId) {
+        const rawQuestion = await c.env.LECTURE_KV.get(`questions:${roomId}:${session.currentQuestionId}`);
+        if (rawQuestion) {
+          return c.json({ activeQuestion: JSON.parse(rawQuestion) });
+        }
+      }
+    }
+    return c.json({ activeQuestion: null });
+  } catch (err: any) {
+    return c.json({ activeQuestion: null });
+  }
+});
+
 // 3. WebSocket Real-time Endpoint
 app.get('/ws/room/:roomId', async (c) => {
   const roomId = c.req.param('roomId');
@@ -601,6 +621,27 @@ app.get('/ws/room/:roomId', async (c) => {
 
   const roomSet = getRoomSockets(roomId);
   roomSet.add(client);
+
+  // Send active question to newly connected client immediately if one exists
+  try {
+    const rawSession = await c.env.LECTURE_KV.get(`session:${roomId}`);
+    if (rawSession) {
+      const session = JSON.parse(rawSession);
+      if (session && session.status === 'active' && session.currentQuestionId) {
+        const rawQuestion = await c.env.LECTURE_KV.get(`questions:${roomId}:${session.currentQuestionId}`);
+        if (rawQuestion) {
+          const questionObj = JSON.parse(rawQuestion);
+          serverSocket.send(JSON.stringify({
+            event: 'APPROVE_QUESTION',
+            questionId: session.currentQuestionId,
+            questionObject: questionObj
+          }));
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Error pushing initial active question on WS connect:', e);
+  }
 
   serverSocket.addEventListener('message', async (event) => {
     try {
@@ -705,6 +746,9 @@ app.get('/ws/room/:roomId', async (c) => {
         );
       } else if (data.event === 'CLOSE_QUESTION') {
         const { questionId } = data;
+        try {
+          await c.env.LECTURE_KV.delete(`session:${roomId}`);
+        } catch (e) {}
         broadcastToRoom(roomId, {
           event: 'CLOSE_QUESTION',
           questionId,
