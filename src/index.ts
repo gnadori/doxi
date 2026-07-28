@@ -292,8 +292,6 @@ app.post('/api/room/:roomId/audio', async (c) => {
         try {
           const whisperRes = await c.env.AI.run(model, {
             audio: numberArray,
-            language: 'hu',
-            prompt: 'Magyar nyelvű egyetemi előadás leirata. Történelem, biológia, fizika, kémia, jog, irodalom. Nevek, évszámok, latin kifejezések és szakmai terminológia.'
           });
           rawTranscript = whisperRes?.text || whisperRes?.transcript || '';
           if (rawTranscript) break;
