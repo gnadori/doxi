@@ -137,56 +137,54 @@ RULES:
 
 // Helper to generate universal high-quality multiple choice questions in Hungarian with structured 5-question sequence
 async function generate5QuestionsWithAI(ai: any, cleanTranscript: string, topic?: string): Promise<any[]> {
-  const QUIZ_GEN_PROMPT = `You are a master university professor designing a 5-question comprehension quiz in Hungarian based on a lecture transcript.
+  const QUIZ_GEN_PROMPT = `You are a master university professor designing a 5-question comprehension quiz in Hungarian based on the lecture transcript.
 ${topic ? `\nLECTURE TOPIC / SUBJECT: "${topic}"` : ''}
 
-STRICT 5-QUESTION SEQUENCE (YOU MUST GENERATE EXACTLY 5 QUESTIONS IN THIS ORDER):
+STRICT 5-QUESTION SEQUENCE (YOU MUST GENERATE 5 REAL QUESTIONS IN THIS EXACT SEQUENCE):
 
-- QUESTION 1 & QUESTION 2 (Összegzés / Főtéma):
-  * Question 1 MUST start with "Miről volt eddig szó..." and ask what the main subject/topic of the lecture snippet was.
-  * Question 2 MUST also be an overview question (e.g. "Mi az elhangzott előadásrészlet legfőbb tézise?").
+1. QUESTION 1 (Összegző kérdés):
+   * Question Text MUST BE: "Miről volt eddig szó az előadásrészlet alapján?"
+   * Options MUST contain 4 real, distinct topic options summarizing what was discussed in the transcript.
 
-- QUESTION 3 & QUESTION 4 (Fogalmak és szakkifejezések):
-  * Questions 3 and 4 MUST test specific concepts, definitions, terms, or proper names mentioned in the text.
+2. QUESTION 2 (Fő tézis / Összegzés):
+   * Question Text MUST BE: "Mi az elhangzott előadásrészlet legfőbb tézise?"
+   * Options MUST contain 4 real, distinct thesis statements based on the transcript.
 
-- QUESTION 5 (Részletkérdés):
-  * Question 5 can test any specific detail, fact, or statement from the transcript.
+3. QUESTION 3 (1. Fogalom / Szakkifejezés):
+   * Question Text MUST test a specific concept, term, definition, or proper name mentioned in the text (e.g. "Whig szemléletű értelmezés", "Dicsőséges forradalom").
 
-RULES:
-1. Write 100% in natural, grammatically perfect Hungarian.
-2. Provide 4 distinct options per question (1 correct answer matching the facts, 3 realistic distractors). DO NOT include any labels like "Helyes válasz", "Tévesztő", or "A:".
-3. Respond ONLY with a valid JSON object matching this exact structure:
+4. QUESTION 4 (2. Fogalom / Szakkifejezés):
+   * Question Text MUST test another specific concept, term, or definition from the text.
+
+5. QUESTION 5 (Részletkérdés):
+   * Question Text MUST test a specific detail, fact, date, or statement from the transcript.
+
+CRITICAL RULES:
+- ALL options must be REAL, SPECIFIC Hungarian sentences/statements from the transcript. NEVER output placeholders like "A fő téma", "A fő megállapítás", "A fogalom", or "Téves fogalom".
+- Output ONLY valid JSON matching this exact structure:
 {
   "questions": [
     {
       "text": "Miről volt eddig szó az előadásrészlet alapján?",
-      "options": ["A fő téma", "Másik témakör", "Téves feltételezés", "Egyik sem"],
+      "options": [
+        "Az angol polgári forradalom és a Whig történeti értelmezés kialakulása",
+        "A francia abszolutizmus gazdasági reformjai",
+        "A német-római császárság vallásháborúi",
+        "Az amerikai függetlenségi nyilatkozat elfogadása"
+      ],
       "correctIndex": 0,
-      "explanation": "Az előadás a megadott témát tárgyalta."
+      "explanation": "Az előadás az angol polgári forradalom történeti megközelítését tárgyalta."
     },
     {
-      "text": "Mi volt az elhangzottak legfőbb tézise?",
-      "options": ["A fő megállapítás", "Eltérő állítás", "Másik hipotézis", "Egyik sem"],
+      "text": "Mi az elhangzott előadásrészlet legfőbb tézise?",
+      "options": [
+        "A Whig szemlélet szerint az 1688-as forradalom a parlamentáris alkotmányosság alapja",
+        "A monarchia teljes eltörlése volt a forradalom egyetlen célja",
+        "A polgári átalakulás kizárólag külföldi katonai beavatkozás eredménye volt",
+        "Egyik sem a fentiek közül"
+      ],
       "correctIndex": 0,
-      "explanation": "A leirat tézise."
-    },
-    {
-      "text": "Milyen fogalomra utal az előadás...",
-      "options": ["A fogalom", "Téves fogalom A", "Téves fogalom B", "Téves fogalom C"],
-      "correctIndex": 0,
-      "explanation": "Az elhangzott szakkifejezés."
-    },
-    {
-      "text": "Melyik szakkifejezés írja le...",
-      "options": ["Helyes terminus", "Másik szakkifejezés A", "Másik szakkifejezés B", "Másik szakkifejezés C"],
-      "correctIndex": 0,
-      "explanation": "A megadott szakmai kifejezés."
-    },
-    {
-      "text": "Melyik részletre utal az alábbi megállapítás...",
-      "options": ["Helyes részlet", "Másik tény A", "Másik tény B", "Másik tény C"],
-      "correctIndex": 0,
-      "explanation": "Az előadásban elhangzott tény."
+      "explanation": "Az előadás legfőbb tézise a Whig alkotmányos megközelítést emelte ki."
     }
   ]
 }`;
@@ -229,24 +227,14 @@ RULES:
           batch.forEach((q: any) => {
             if (q.text && Array.isArray(q.options) && q.options.length === 4) {
               const cleanText = q.text.trim();
-              if (!questions.some((ex: any) => ex.text === cleanText)) {
+              // Filter out any placeholder options
+              const isPlaceholder = q.options.some((opt: string) => /fő téma|fő megállapítás|téves fogalom|helyes tény|helyes válasz|tévesztő/i.test(opt));
+              if (!isPlaceholder && !questions.some((ex: any) => ex.text === cleanText)) {
                 q.options = q.options.map((opt: string) => sanitizeOptionText(opt));
                 questions.push(q);
               }
             }
           });
-
-          // Ensure Question 1 strictly starts with "Miről volt eddig szó..."
-          if (questions.length > 0) {
-            if (!questions[0].text.startsWith('Miről volt eddig szó')) {
-              questions[0].text = `Miről volt eddig szó az előadásrészlet alapján?`;
-            }
-          }
-          if (questions.length > 1) {
-            if (!questions[1].text.includes('tézise') && !questions[1].text.includes('fő') && !questions[1].text.includes('összefoglalása')) {
-              questions[1].text = `Mi volt az elhangzott előadásrészlet legfőbb megállapítása?`;
-            }
-          }
         } catch (parseErr) {
           const matches = rawText.match(/\{[^{}]*"text"[^{}]*"options"[^{}]*\}/g);
           if (matches) {
@@ -254,8 +242,11 @@ RULES:
               try {
                 const q = JSON.parse(m);
                 if (q.text && q.options && Array.isArray(q.options) && q.options.length === 4) {
-                  q.options = q.options.map((opt: string) => sanitizeOptionText(opt));
-                  questions.push(q);
+                  const isPlaceholder = q.options.some((opt: string) => /fő téma|fő megállapítás|téves fogalom|helyes tény|helyes válasz|tévesztő/i.test(opt));
+                  if (!isPlaceholder) {
+                    q.options = q.options.map((opt: string) => sanitizeOptionText(opt));
+                    questions.push(q);
+                  }
                 }
               } catch (e) {}
             }
@@ -263,25 +254,33 @@ RULES:
         }
       }
 
-      if (questions.length >= 2) break;
+      if (questions.length >= 3) break;
     } catch (e) {
       console.error(`Quiz generation model error (${model}):`, e);
     }
   }
 
-  // Universal Fallback if parsing produced no questions
+  // Ensure Question 1 text is strictly "Miről volt eddig szó az előadásrészlet alapján?"
+  if (questions.length > 0) {
+    questions[0].text = `Miről volt eddig szó az előadásrészlet alapján?`;
+  }
+  if (questions.length > 1) {
+    questions[1].text = `Mi az elhangzott előadásrészlet legfőbb tézise?`;
+  }
+
+  // Real factual fallback if parsing produced no questions
   if (questions.length === 0 && cleanTranscript.length > 5) {
     const firstSentence = cleanTranscript.split('.')[0] || cleanTranscript;
     questions.push({
-      text: `Mire utal az előadásban elhangzott alábbi szakmai megállapítás: "${firstSentence.substring(0, 55)}..."?`,
+      text: `Miről volt eddig szó az előadásrészlet alapján?`,
       options: [
-        firstSentence.substring(0, 45),
-        "Általános igazgatási közleményekre",
-        "Jogszabályi és elméleti keretekre",
+        firstSentence.substring(0, 55),
+        "Általános adminisztratív közleményekről és szervezési szabályzatról",
+        "Jogszabályi és elméleti keretek eltérő történeti megközelítéseiről",
         "Egyik sem a fentiek közül"
       ],
       correctIndex: 0,
-      explanation: "Közvetlenül az elhangzott előadásrészletből származik."
+      explanation: "Közvetlenül az elhangzott előadásrészlet tézisét tükrözi."
     });
   }
 
@@ -384,9 +383,6 @@ app.post('/api/room/:roomId/audio', async (c) => {
       const questionId = `q_${now}_${Math.random().toString(36).substring(2, 7)}`;
 
       let questionText = (q.text || 'Megértési ellenőrző kérdés').trim();
-      if (questionText === cleanTranscript.trim() || questionText === rawTranscript.trim()) {
-        questionText = 'Mi a legfőbb megállapítás az elhangzott előadásrészlet alapján?';
-      }
 
       const questionObj = {
         id: questionId,
