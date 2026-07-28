@@ -658,7 +658,13 @@
 
     // Instant Sample Text Trigger
     document.getElementById('sendSampleTextBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('sendSampleTextBtn');
       const text = document.getElementById('sampleTextPrompt').value.trim() || 'The mitochondria is the powerhouse of the cell, generating ATP through oxidative phosphorylation.';
+      
+      const originalHTML = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="animate-pulse">⏳ Thinking...</span>';
+
       try {
         const formData = new FormData();
         formData.append('text', text);
@@ -668,11 +674,22 @@
           body: formData
         });
         const json = await res.json();
-        if (json.questions && json.questions.length > 0) {
-          alert(`Successfully generated ${json.questions.length} AI question(s)! Check the Review Queue.`);
+        
+        if (res.ok && json.questions && json.questions.length > 0) {
+          json.questions.forEach(q => {
+            if (!pendingQuestions.some(existing => existing.id === q.id)) {
+              addQuestionToPendingQueue(q);
+            }
+          });
+        } else {
+          alert(`AI Generation Error: ${json.error || 'Unknown error'} ${json.details ? '(' + json.details + ')' : ''}`);
         }
       } catch (err) {
         console.error('Instant test trigger failed:', err);
+        alert('Failed to connect to AI generation API endpoint.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
       }
     });
 
