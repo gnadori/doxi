@@ -98,7 +98,7 @@
             <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
               🎙️ Audio Engine
               <span id="recordingBadge" class="hidden text-xs px-2 py-0.5 rounded-full bg-red-500/20 border border-red-500/30 text-red-400 font-mono flex items-center gap-1">
-                <span class="h-1.5 w-1.5 rounded-full bg-red-500 animate-ping"></span> Live 5m Slicing
+                <span class="h-1.5 w-1.5 rounded-full bg-red-500 animate-ping"></span> Live Recording
               </span>
             </h3>
             <span id="chunkTimer" class="font-mono text-xs text-slate-500">00:00</span>
@@ -106,12 +106,20 @@
 
           <div class="space-y-3">
             <div class="flex gap-2">
-              <button id="startMicBtn" class="flex-1 py-2.5 px-4 bg-brand-600 hover:bg-brand-500 active:bg-brand-700 text-white font-medium text-xs rounded-xl shadow-lg shadow-brand-600/30 transition flex items-center justify-center gap-2">
-                <span>Start Mic Stream</span>
+              <button id="startMicBtn" class="flex-1 py-2.5 px-3 bg-brand-600 hover:bg-brand-500 active:bg-brand-700 text-white font-medium text-xs rounded-xl shadow-lg shadow-brand-600/30 transition flex items-center justify-center gap-1">
+                <span>▶ Start Mic</span>
               </button>
-              <button id="stopMicBtn" disabled class="py-2.5 px-4 bg-slate-800 opacity-50 hover:bg-slate-700 text-slate-300 font-medium text-xs rounded-xl transition">
-                Stop
+              <button id="sendChunkBtn" disabled class="py-2.5 px-3 bg-slate-800 opacity-50 hover:bg-slate-700 text-slate-300 font-medium text-xs rounded-xl transition flex items-center gap-1 border border-slate-700">
+                <span>⚡ Send Now</span>
               </button>
+              <button id="stopMicBtn" disabled class="py-2.5 px-3 bg-red-500/20 opacity-50 hover:bg-red-500/30 text-red-300 font-medium text-xs rounded-xl transition border border-red-500/30">
+                ■ Stop & Process
+              </button>
+            </div>
+
+            <!-- Status Indicator Bar -->
+            <div id="audioStatusContainer" class="hidden p-2 rounded-lg bg-slate-900 border border-slate-800 text-[11px] font-mono text-slate-400 flex items-center justify-between">
+              <span id="audioStatusText">Idle</span>
             </div>
             
             <!-- Quick Test Trigger for instant demonstration -->
@@ -588,36 +596,54 @@
       alert('Student room URL copied to clipboard!');
     });
 
-    // Mic Recording Engine
+    // Mic Recording Engine with recordedBlobs accumulator
     let mediaRecorder = null;
-    let audioInterval = null;
+    let recordedBlobs = [];
     let secondsElapsed = 0;
     let timerInterval = null;
 
     const startMicBtn = document.getElementById('startMicBtn');
+    const sendChunkBtn = document.getElementById('sendChunkBtn');
     const stopMicBtn = document.getElementById('stopMicBtn');
     const recordingBadge = document.getElementById('recordingBadge');
     const chunkTimer = document.getElementById('chunkTimer');
+    const audioStatusContainer = document.getElementById('audioStatusContainer');
+    const audioStatusText = document.getElementById('audioStatusText');
+
+    function setAudioStatus(msg, isError = false) {
+      audioStatusContainer.classList.remove('hidden');
+      audioStatusText.textContent = msg;
+      if (isError) {
+        audioStatusContainer.className = "p-2 rounded-lg bg-red-500/10 border border-red-500/20 text-[11px] font-mono text-red-400 flex items-center justify-between";
+      } else {
+        audioStatusContainer.className = "p-2 rounded-lg bg-slate-900 border border-slate-800 text-[11px] font-mono text-slate-300 flex items-center justify-between";
+      }
+    }
 
     startMicBtn.addEventListener('click', async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        recordedBlobs = [];
         mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
 
-        mediaRecorder.ondataavailable = async (e) => {
-          if (e.data.size > 0) {
-            sendAudioChunk(e.data);
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) {
+            recordedBlobs.push(e.data);
           }
         };
 
-        // Slice every 300,000 ms (5 mins)
-        mediaRecorder.start(300000);
+        // Slice data every 10,000ms (10 seconds) into recordedBlobs
+        mediaRecorder.start(10000);
 
         startMicBtn.disabled = true;
         startMicBtn.classList.add('opacity-50');
+        sendChunkBtn.disabled = false;
+        sendChunkBtn.classList.remove('opacity-50');
         stopMicBtn.disabled = false;
         stopMicBtn.classList.remove('opacity-50');
         recordingBadge.classList.remove('hidden');
+
+        setAudioStatus('🎙️ Felvétel folyamatban...');
 
         secondsElapsed = 0;
         timerInterval = setInterval(() => {
@@ -629,24 +655,63 @@
 
       } catch (err) {
         console.error('Error accessing microphone:', err);
-        alert('Could not access microphone. Please check browser permissions.');
+        alert('Nem sikerült hozzáférni a mikrofonhoz. Kérjük, engedélyezd a böngészőben.');
       }
+    });
+
+    sendChunkBtn.addEventListener('click', () => {
+      processCurrentAudioSlice(false);
     });
 
     stopMicBtn.addEventListener('click', () => {
-      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
-        mediaRecorder.stream.getTracks().forEach(track => track.stop());
-      }
-      clearInterval(timerInterval);
-      startMicBtn.disabled = false;
-      startMicBtn.classList.remove('opacity-50');
-      stopMicBtn.disabled = true;
-      stopMicBtn.classList.add('opacity-50');
-      recordingBadge.classList.add('hidden');
+      processCurrentAudioSlice(true);
     });
 
+    async function processCurrentAudioSlice(stopRecording = false) {
+      if (!mediaRecorder) return;
+
+      setAudioStatus('⏳ Felvett hang feldolgozása Whisper AI-val...');
+
+      if (mediaRecorder.state !== 'inactive') {
+        try { mediaRecorder.requestData(); } catch (e) {}
+      }
+
+      setTimeout(async () => {
+        if (stopRecording) {
+          if (mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+            mediaRecorder.stream.getTracks().forEach(track => track.stop());
+          }
+          clearInterval(timerInterval);
+          startMicBtn.disabled = false;
+          startMicBtn.classList.remove('opacity-50');
+          sendChunkBtn.disabled = true;
+          sendChunkBtn.classList.add('opacity-50');
+          stopMicBtn.disabled = true;
+          stopMicBtn.classList.add('opacity-50');
+          recordingBadge.classList.add('hidden');
+        }
+
+        if (recordedBlobs.length === 0) {
+          setAudioStatus('❌ Nincs rögzített hanganyag.', true);
+          return;
+        }
+
+        const audioBlob = new Blob(recordedBlobs, { type: 'audio/webm' });
+        recordedBlobs = [];
+
+        await sendAudioChunk(audioBlob);
+      }, 300);
+    }
+
     async function sendAudioChunk(blob) {
+      if (!blob || blob.size === 0) {
+        setAudioStatus('❌ Üres hangfájl', true);
+        return;
+      }
+
+      setAudioStatus(`🎙️ ${Math.round(blob.size / 1024)} KB hang leiratozása Whisper AI-val...`);
+
       try {
         const formData = new FormData();
         formData.append('audio', blob, 'chunk.webm');
@@ -657,8 +722,23 @@
         });
         const json = await res.json();
         console.log('Audio chunk response:', json);
+
+        if (res.ok && json.questions && json.questions.length > 0) {
+          json.questions.forEach(q => {
+            if (!pendingQuestions.some(existing => existing.id === q.id)) {
+              addQuestionToPendingQueue(q);
+            }
+          });
+          setAudioStatus(`✓ Felismerve: "${json.transcript.substring(0, 35)}..."`);
+          alert(`Sikeres leiratozás!\n\nFelismert beszéd: "${json.transcript}"\n\nGenerált kérdés bekerült a várólistára.`);
+        } else {
+          setAudioStatus(`❌ AI Hiba: ${json.error || 'Failed'}`, true);
+          alert(`Hiba történt: ${json.error || 'Ismeretlen hiba'} ${json.details ? '(' + json.details + ')' : ''}`);
+        }
       } catch (err) {
         console.error('Failed to upload audio chunk:', err);
+        setAudioStatus('❌ Feltöltési hiba', true);
+        alert('Hiba történt a felvétel elküldésekor.');
       }
     }
 
