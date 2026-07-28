@@ -52,12 +52,32 @@ app.onError((err, c) => {
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: Date.now() }));
 
+// Helper to fix common Hungarian speech-to-text phonetic spelling typos (e.g. "hőmérséglet" -> "hőmérséklet")
+function fixHungarianSpelling(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/hőmérséglet/gi, 'hőmérséklet')
+    .replace(/hőmérségleti/gi, 'hőmérsékleti')
+    .replace(/hőmérségletet/gi, 'hőmérsékletet')
+    .replace(/hőmérséglettel/gi, 'hőmérséklettel')
+    .replace(/hőmérséglete/gi, 'hőmérséklete')
+    .replace(/hőmérségletre/gi, 'hőmérsékletre')
+    .replace(/hőmérségletből/gi, 'hőmérsékletből')
+    .replace(/hőmérséglethez/gi, 'hőmérséklethez')
+    .replace(/borosztján/gi, 'borostyán')
+    .replace(/reprodukányomagát/gi, 'szaporodását')
+    .replace(/szarómaik/gi, 'szarmaták')
+    .replace(/mohán/gi, 'tápanyag')
+    .replace(/mohány/gi, 'tápanyag');
+}
+
 // Helper to strip unwanted labels (e.g. "Helyes válasz:", "Tévesztő A:", "Option A:") from option text
 function sanitizeOptionText(text: string): string {
   if (!text) return '';
-  return text
+  const cleaned = text
     .replace(/^(Helyes válasz|Helyes|Tévesztő [A-Z0-9]?|Tévesztő|Option [A-Z0-9]?|[A-D])\s*[:\.-]\s*/gi, '')
     .trim();
+  return fixHungarianSpelling(cleaned);
 }
 
 // Helper to clean speech-to-text transcript for ANY academic discipline (Universal Domain-Agnostic Cleaner)
@@ -91,7 +111,7 @@ RULES:
       });
       const text = typeof res === 'string' ? res : res?.response;
       if (text && text.trim()) {
-        return text.trim().replace(/^"|"$/g, '');
+        return fixHungarianSpelling(text.trim().replace(/^"|"$/g, ''));
       }
     } catch (e) {
       console.error(`Transcript cleanup error (${model}):`, e);

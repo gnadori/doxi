@@ -187,14 +187,19 @@
             </button>
           </div>
 
-          <!-- Transcript Correction Banner -->
-          <div id="transcriptCorrectionBanner" class="hidden mb-3 p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-1">
-            <div class="text-slate-400 font-semibold flex justify-between">
-              <span>🎙️ Tisztított és Javított Leirat (AI Phonetic Corrector):</span>
-              <span id="transcriptWordCount" class="font-mono text-[10px] text-slate-500"></span>
+          <!-- Collapsible Transcript Correction Banner -->
+          <details id="transcriptCorrectionBanner" class="hidden mb-3 group bg-slate-900/90 border border-purple-500/30 rounded-xl text-xs overflow-hidden transition-all">
+            <summary class="flex items-center justify-between p-2.5 bg-purple-950/20 hover:bg-purple-900/30 cursor-pointer select-none font-medium text-purple-300">
+              <span class="flex items-center gap-1.5 font-semibold text-[11px]">
+                <span>🎙️ AI Tisztított Leirat</span>
+                <span id="transcriptWordCount" class="font-mono text-[10px] text-purple-400/80"></span>
+              </span>
+              <span class="text-[10px] text-purple-400 bg-purple-900/40 px-2 py-0.5 rounded border border-purple-700/40">Kattints a megtekintéshez ▼</span>
+            </summary>
+            <div class="p-3 border-t border-purple-900/40 bg-slate-950/60">
+              <p id="cleanTranscriptText" class="text-slate-200 italic leading-relaxed font-sans text-xs"></p>
             </div>
-            <p id="cleanTranscriptText" class="text-slate-200 italic leading-relaxed"></p>
-          </div>
+          </details>
 
           <div id="pendingQuestionsList" class="flex-1 overflow-y-auto space-y-4 pr-1">
             <!-- Empty state -->
