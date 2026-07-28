@@ -635,6 +635,36 @@
     const audioStatusContainer = document.getElementById('audioStatusContainer');
     const audioStatusText = document.getElementById('audioStatusText');
 
+    let speechRecognition = null;
+    let liveTranscriptBuffer = '';
+    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (SpeechRecognitionAPI) {
+      try {
+        speechRecognition = new SpeechRecognitionAPI();
+        speechRecognition.continuous = true;
+        speechRecognition.interimResults = true;
+        speechRecognition.lang = 'hu-HU';
+
+        speechRecognition.onresult = (event) => {
+          let currentTranscript = '';
+          for (let i = 0; i < event.results.length; i++) {
+            currentTranscript += event.results[i][0].transcript + ' ';
+          }
+          liveTranscriptBuffer = currentTranscript.trim();
+          if (liveTranscriptBuffer) {
+            displayCleanTranscript(liveTranscriptBuffer, '🔴 Élő Beszédfelismerés (Google Engine):');
+          }
+        };
+
+        speechRecognition.onerror = (err) => {
+          console.warn('Web Speech API notice:', err);
+        };
+      } catch (e) {
+        console.warn('SpeechRecognition initialization error:', e);
+      }
+    }
+
     function setAudioStatus(msg, isError = false) {
       audioStatusContainer.classList.remove('hidden');
       audioStatusText.textContent = msg;
@@ -647,6 +677,11 @@
 
     startMicBtn.addEventListener('click', async () => {
       try {
+        liveTranscriptBuffer = '';
+        if (speechRecognition) {
+          try { speechRecognition.start(); } catch (e) {}
+        }
+
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: 1,
@@ -664,7 +699,6 @@
           }
         };
 
-        // Slice data every 10,000ms (10 seconds) into recordedBlobs
         mediaRecorder.start(10000);
 
         startMicBtn.disabled = true;
@@ -675,7 +709,7 @@
         stopMicBtn.classList.remove('opacity-50');
         recordingBadge.classList.remove('hidden');
 
-        setAudioStatus('🎙️ Felvétel folyamatban...');
+        setAudioStatus(speechRecognition ? '🎙️ Élő beszéd felismerése (Google Engine + hu-HU)...' : '🎙️ Felvétel folyamatban...');
 
         secondsElapsed = 0;
         timerInterval = setInterval(() => {
@@ -702,7 +736,11 @@
     async function processCurrentAudioSlice(stopRecording = false) {
       if (!mediaRecorder) return;
 
-      setAudioStatus('⏳ Felvett hang feldolgozása Whisper AI-val...');
+      setAudioStatus('⏳ Beszédleirat feldolgozása & Kérdésgenerálás...');
+
+      if (speechRecognition) {
+        try { speechRecognition.stop(); } catch (e) {}
+      }
 
       if (mediaRecorder.state !== 'inactive') {
         try { mediaRecorder.requestData(); } catch (e) {}
@@ -724,6 +762,15 @@
           recordingBadge.classList.add('hidden');
         }
 
+        const topic = document.getElementById('lectureTopicInput') ? document.getElementById('lectureTopicInput').value.trim() : '';
+
+        // Prioritize real-time Google Speech API transcript if available!
+        if (liveTranscriptBuffer && liveTranscriptBuffer.trim().length > 5) {
+          const textToSend = liveTranscriptBuffer.trim();
+          await sendTextPayload(textToSend, topic);
+          return;
+        }
+
         if (recordedBlobs.length === 0) {
           setAudioStatus('❌ Nincs rögzített hanganyag.', true);
           return;
@@ -731,14 +778,48 @@
 
         let blobsToSend = recordedBlobs;
         if (recordedBlobs.length > 6) {
-          // Always preserve recordedBlobs[0] (WebM EBML container header) to prevent invalid WebM error 3010
           blobsToSend = [recordedBlobs[0], ...recordedBlobs.slice(-6)];
         }
         const audioBlob = new Blob(blobsToSend, { type: 'audio/webm' });
         recordedBlobs = [];
 
-        await sendAudioChunk(audioBlob);
+        await sendAudioChunk(audioBlob, topic);
       }, 300);
+    }
+
+    async function sendTextPayload(textPrompt, topic = '') {
+      setAudioStatus('🧠 Leirat feldolgozása & 5 kérdés generálása AI-val...');
+
+      try {
+        const formData = new FormData();
+        formData.append('text', textPrompt);
+        if (topic) formData.append('topic', topic);
+
+        const res = await fetch(`/api/room/${encodeURIComponent(currentRoom)}/audio`, {
+          method: 'POST',
+          body: formData
+        });
+        const json = await res.json();
+
+        if (res.ok && json.questions && json.questions.length > 0) {
+          if (json.cleanTranscript) {
+            displayCleanTranscript(json.cleanTranscript, '🧠 AI Tisztított & Helyreállított Leirat:');
+          }
+          json.questions.forEach(q => {
+            if (!pendingQuestions.some(existing => existing.id === q.id)) {
+              addQuestionToPendingQueue(q);
+            }
+          });
+          setAudioStatus(`✓ Sikeres: ${json.questions.length} kérdés generálva`);
+          alert(`Sikeres beszédleiratozás & kérdésgenerálás!\n\nJavított leirat: "${json.cleanTranscript || json.transcript}"\n\n${json.questions.length} db kérdés bekerült a várólistára.`);
+        } else {
+          setAudioStatus(`❌ AI Hiba: ${json.error || 'Failed'}`, true);
+          alert(`Hiba történt: ${json.error || 'Ismeretlen hiba'} ${json.details ? '(' + json.details + ')' : ''}`);
+        }
+      } catch (err) {
+        console.error('Failed to send text payload:', err);
+        setAudioStatus('❌ Küldési hiba', true);
+      }
     }
 
     async function sendAudioChunk(blob) {
@@ -784,14 +865,14 @@
       }
     }
 
-    function displayCleanTranscript(text) {
+    function displayCleanTranscript(text, title = '') {
       const banner = document.getElementById('transcriptCorrectionBanner');
       const textElem = document.getElementById('cleanTranscriptText');
       const countElem = document.getElementById('transcriptWordCount');
       if (banner && textElem) {
         textElem.textContent = `"${text}"`;
         if (countElem) {
-          countElem.textContent = `${text.split(/\s+/).length} szó`;
+          countElem.textContent = title ? `${title} (${text.split(/\s+/).length} szó)` : `${text.split(/\s+/).length} szó`;
         }
         banner.classList.remove('hidden');
       }
