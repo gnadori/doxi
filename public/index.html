@@ -639,7 +639,14 @@
 
     startMicBtn.addEventListener('click', async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
         recordedBlobs = [];
         mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
 

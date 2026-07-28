@@ -52,10 +52,18 @@ app.onError((err, c) => {
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: Date.now() }));
 
-// Helper to fix common Hungarian speech-to-text phonetic spelling typos & STEM formula distortions
+// Helper to fix common Hungarian speech-to-text phonetic spelling typos & STEM/Humanities distortions
 function fixHungarianSpelling(text: string): string {
   if (!text) return '';
   return text
+    .replace(/médián évum/gi, 'Medium Aevum')
+    .replace(/Erdo Bruni/gi, 'Leonardo Bruni')
+    .replace(/Milano-nyevediktum/gi, 'milanói ediktum')
+    .replace(/milano-ediktum/gi, 'milanói ediktum')
+    .replace(/három történelem/gi, 'hármas korszakolás')
+    .replace(/három stakolást/gi, 'hármas korszakolás')
+    .replace(/nyugatrom viradalom/gi, 'Nyugatrómai Birodalom')
+    .replace(/nyugatrom viradalomát/gi, 'Nyugatrómai Birodalom bukása')
     .replace(/Balcman/gi, 'Boltzmann')
     .replace(/Bolcman/gi, 'Boltzmann')
     .replace(/Avogadro-rozsma/gi, 'Avogadro-szám')
@@ -88,17 +96,17 @@ function sanitizeOptionText(text: string): string {
   return fixHungarianSpelling(cleaned);
 }
 
-// Helper to clean speech-to-text transcript for ANY academic discipline & STEM formulas
+// Helper to clean speech-to-text transcript for ANY academic discipline & STEM/Humanities formulas
 async function cleanTranscriptWithAI(ai: any, rawTranscript: string): Promise<string> {
-  const CLEANUP_PROMPT = `You are a master academic editor and STEM proofreader (Physics, Chemistry, Math, Biology, History, Law, Engineering).
+  const CLEANUP_PROMPT = `You are a master Hungarian university editor and academic proofreader (History, Physics, Literature, Chemistry, Law, Biology, Engineering).
 
 YOUR TASK:
 Reconstruct garbled speech-to-text transcripts into clean, accurate, professional Hungarian lecture text.
 
-STEM & PHYSICS FORMULA RECONSTRUCTION RULES:
-1. Fix misheard formulas, constants, and variables (e.g., "pécketől véketőpertékető" -> "(p1·V1)/T1 = (p2·V2)/T2", "Balcman" -> "Boltzmann-állandó", "Avogadro-rozsma" -> "Avogadro-szám", "gázalandó" -> "egyetemes gázállandó (R)", "kelvinben mért hűmérséglet" -> "Kelvinben mért hőmérséklet (T)").
-2. Restore proper scientific terminology, symbols, and units (p = nyomás, V = térfogat, T = hőmérséklet, R = 8.314 J/mol·K).
-3. Reconstruct clear, grammatically perfect Hungarian lecture sentences.
+STT CORRECTION RULES:
+1. Fix misheard speech typos, phonetic distortions, broken historical names, Latin terms, and formulas (e.g. "Erdo Bruni" -> "Leonardo Bruni", "médián évum" -> "Medium Aevum", "Milano-nyevediktum" -> "milanói ediktum", "Balcman" -> "Boltzmann-állandó", "Avogadro-rozsma" -> "Avogadro-szám").
+2. Reconstruct proper Hungarian grammar, punctuation, proper nouns, and historical/scientific terminology for any discipline.
+3. Preserve all factual concepts, dates, names, and academic meaning intact.
 4. Output ONLY the clean, restored lecture text without quotes or markdown.`;
 
   const models = [
@@ -126,7 +134,7 @@ STEM & PHYSICS FORMULA RECONSTRUCTION RULES:
     }
   }
 
-  return rawTranscript;
+  return fixHungarianSpelling(rawTranscript);
 }
 
 // Helper to generate universal high-quality multiple choice questions in Hungarian for ANY subject
@@ -284,6 +292,8 @@ app.post('/api/room/:roomId/audio', async (c) => {
         try {
           const whisperRes = await c.env.AI.run(model, {
             audio: numberArray,
+            language: 'hu',
+            prompt: 'Magyar nyelvű egyetemi előadás leirata. Történelem, biológia, fizika, kémia, jog, irodalom. Nevek, évszámok, latin kifejezések és szakmai terminológia.'
           });
           rawTranscript = whisperRes?.text || whisperRes?.transcript || '';
           if (rawTranscript) break;
@@ -334,7 +344,7 @@ app.post('/api/room/:roomId/audio', async (c) => {
 
       const questionObj = {
         id: questionId,
-        text: questionText,
+        text: fixHungarianSpelling(questionText),
         options: Array.isArray(q.options) && q.options.length === 4 ? q.options.map((opt: string) => sanitizeOptionText(opt)) : [
           sanitizeOptionText(q.options?.[0] || 'Elsődleges megállapítás'),
           sanitizeOptionText(q.options?.[1] || 'Alternatív elmélet'),
@@ -342,7 +352,7 @@ app.post('/api/room/:roomId/audio', async (c) => {
           sanitizeOptionText(q.options?.[3] || 'Egyik sem')
         ],
         correctIndex: typeof q.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex < 4 ? q.correctIndex : 0,
-        explanation: q.explanation || 'Az elhangzottak alapján.',
+        explanation: fixHungarianSpelling(q.explanation || 'Az elhangzottak alapján.'),
         approved: false,
         timestamp: now,
       };
@@ -411,7 +421,7 @@ app.post('/api/room/:roomId/more-questions', async (c) => {
       const questionId = `q_${now}_${Math.random().toString(36).substring(2, 7)}`;
       const questionObj = {
         id: questionId,
-        text: q.text || 'Megértési ellenőrző kérdés',
+        text: fixHungarianSpelling(q.text || 'Megértési ellenőrző kérdés'),
         options: Array.isArray(q.options) && q.options.length === 4 ? q.options.map((opt: string) => sanitizeOptionText(opt)) : [
           sanitizeOptionText(q.options?.[0] || 'Elsődleges megállapítás'),
           sanitizeOptionText(q.options?.[1] || 'Alternatív elmélet'),
@@ -419,7 +429,7 @@ app.post('/api/room/:roomId/more-questions', async (c) => {
           sanitizeOptionText(q.options?.[3] || 'Egyik sem')
         ],
         correctIndex: typeof q.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex < 4 ? q.correctIndex : 0,
-        explanation: q.explanation || 'Az elhangzottak alapján.',
+        explanation: fixHungarianSpelling(q.explanation || 'Az elhangzottak alapján.'),
         approved: false,
         timestamp: now,
       };
