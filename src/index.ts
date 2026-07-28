@@ -135,28 +135,58 @@ RULES:
   return fixHungarianSpelling(rawTranscript);
 }
 
-// Helper to generate universal high-quality multiple choice questions in Hungarian for ANY subject
+// Helper to generate universal high-quality multiple choice questions in Hungarian with structured 5-question sequence
 async function generate5QuestionsWithAI(ai: any, cleanTranscript: string, topic?: string): Promise<any[]> {
-  const QUIZ_GEN_PROMPT = `You are a universal academic exam question designer. Analyze the lecture transcript across ANY discipline (History, Literature, Physics, Biology, Law, IT, Economics, Chemistry, Mathematics, Geography, etc.) and generate 3 to 5 distinct multiple-choice questions.
-${topic ? `\nLECTURE TOPIC / SUBJECT ANCHOR: "${topic}"\nEnsure questions directly test key concepts related to this lecture topic.` : ''}
+  const QUIZ_GEN_PROMPT = `You are a master university professor designing a 5-question comprehension quiz in Hungarian based on a lecture transcript.
+${topic ? `\nLECTURE TOPIC / SUBJECT: "${topic}"` : ''}
 
-STRICT INSTRUCTIONS:
-1. Write 3 to 5 high-quality, professional questions IN NATURAL, GRAMMATICALLY PERFECT HUNGARIAN.
-2. Each question text MUST be a real question ending with "?". DO NOT copy the transcript verbatim as the question.
-3. Provide 4 distinct options per question (1 correct answer matching the facts, 3 realistic distractors). DO NOT include any labels like "Helyes válasz", "Tévesztő", or "A:".
-4. Respond ONLY with a valid JSON object matching this exact structure:
+STRICT 5-QUESTION SEQUENCE (YOU MUST GENERATE EXACTLY 5 QUESTIONS IN THIS ORDER):
+
+- QUESTION 1 & QUESTION 2 (Összegzés / Főtéma):
+  * Question 1 MUST start with "Miről volt eddig szó..." and ask what the main subject/topic of the lecture snippet was.
+  * Question 2 MUST also be an overview question (e.g. "Mi az elhangzott előadásrészlet legfőbb tézise?").
+
+- QUESTION 3 & QUESTION 4 (Fogalmak és szakkifejezések):
+  * Questions 3 and 4 MUST test specific concepts, definitions, terms, or proper names mentioned in the text.
+
+- QUESTION 5 (Részletkérdés):
+  * Question 5 can test any specific detail, fact, or statement from the transcript.
+
+RULES:
+1. Write 100% in natural, grammatically perfect Hungarian.
+2. Provide 4 distinct options per question (1 correct answer matching the facts, 3 realistic distractors). DO NOT include any labels like "Helyes válasz", "Tévesztő", or "A:".
+3. Respond ONLY with a valid JSON object matching this exact structure:
 {
   "questions": [
     {
-      "text": "Mi az elhangzott előadásrészlet tézisének lényege?",
-      "options": [
-        "A helyes megállapítás",
-        "Eltérő elméleti megközelítés",
-        "Ellentmondásos feltételezés",
-        "Egyik sem a fentiek közül"
-      ],
+      "text": "Miről volt eddig szó az előadásrészlet alapján?",
+      "options": ["A fő téma", "Másik témakör", "Téves feltételezés", "Egyik sem"],
       "correctIndex": 0,
-      "explanation": "Rövid szakmai magyarázat a leirat alapján."
+      "explanation": "Az előadás a megadott témát tárgyalta."
+    },
+    {
+      "text": "Mi volt az elhangzottak legfőbb tézise?",
+      "options": ["A fő megállapítás", "Eltérő állítás", "Másik hipotézis", "Egyik sem"],
+      "correctIndex": 0,
+      "explanation": "A leirat tézise."
+    },
+    {
+      "text": "Milyen fogalomra utal az előadás...",
+      "options": ["A fogalom", "Téves fogalom A", "Téves fogalom B", "Téves fogalom C"],
+      "correctIndex": 0,
+      "explanation": "Az elhangzott szakkifejezés."
+    },
+    {
+      "text": "Melyik szakkifejezés írja le...",
+      "options": ["Helyes terminus", "Másik szakkifejezés A", "Másik szakkifejezés B", "Másik szakkifejezés C"],
+      "correctIndex": 0,
+      "explanation": "A megadott szakmai kifejezés."
+    },
+    {
+      "text": "Melyik részletre utal az alábbi megállapítás...",
+      "options": ["Helyes részlet", "Másik tény A", "Másik tény B", "Másik tény C"],
+      "correctIndex": 0,
+      "explanation": "Az előadásban elhangzott tény."
     }
   ]
 }`;
@@ -205,6 +235,18 @@ STRICT INSTRUCTIONS:
               }
             }
           });
+
+          // Ensure Question 1 strictly starts with "Miről volt eddig szó..."
+          if (questions.length > 0) {
+            if (!questions[0].text.startsWith('Miről volt eddig szó')) {
+              questions[0].text = `Miről volt eddig szó az előadásrészlet alapján?`;
+            }
+          }
+          if (questions.length > 1) {
+            if (!questions[1].text.includes('tézise') && !questions[1].text.includes('fő') && !questions[1].text.includes('összefoglalása')) {
+              questions[1].text = `Mi volt az elhangzott előadásrészlet legfőbb megállapítása?`;
+            }
+          }
         } catch (parseErr) {
           const matches = rawText.match(/\{[^{}]*"text"[^{}]*"options"[^{}]*\}/g);
           if (matches) {
