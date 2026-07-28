@@ -96,19 +96,16 @@ function sanitizeOptionText(text: string): string {
   return fixHungarianSpelling(cleaned);
 }
 
-// Helper to clean speech-to-text transcript for ANY academic discipline using optional lecture topic context
+// Helper to format raw transcript into structured sentences and paragraphs WITHOUT rewriting words
 async function cleanTranscriptWithAI(ai: any, rawTranscript: string, topic?: string): Promise<string> {
-  const CLEANUP_PROMPT = `You are a master Hungarian university editor and academic proofreader (History, Physics, Literature, Chemistry, Law, Biology, Engineering).
-${topic ? `\nIMPORTANT LECTURE TOPIC / SUBJECT ANCHOR: "${topic}"\nUse this lecture topic context to accurately recognize specialized vocabulary, formulas, proper names, dates, and terminology.` : ''}
+  const FORMAT_PROMPT = `You are a Hungarian text editor. Your ONLY task is to structure the speech transcript into clear sentences and logical paragraphs with proper capitalization and punctuation.
+${topic ? `\nLECTURE TOPIC: "${topic}"` : ''}
 
-YOUR TASK:
-Reconstruct garbled speech-to-text transcripts into clean, accurate, professional Hungarian lecture text.
-
-STT CORRECTION RULES:
-1. Fix misheard speech typos, phonetic distortions, broken historical names, Latin terms, and formulas using the lecture topic context.
-2. Reconstruct proper Hungarian grammar, punctuation, proper nouns, and historical/scientific terminology for any discipline.
-3. Preserve all factual concepts, dates, names, and academic meaning intact.
-4. Output ONLY the clean, restored lecture text without quotes or markdown.`;
+RULES:
+1. DO NOT change, rephrase, or substitute the speaker's words. Preserve the exact vocabulary.
+2. Format into clean sentences with proper initial capitalization and ending punctuation (periods, question marks, exclamation marks).
+3. Group related sentences into clean paragraphs separated by double line breaks (\\n\\n).
+4. Output ONLY the formatted Hungarian text without quotes or markdown code blocks.`;
 
   const models = [
     '@cf/qwen/qwen1.5-14b-chat',
@@ -121,7 +118,7 @@ STT CORRECTION RULES:
     try {
       const res = await ai.run(model, {
         messages: [
-          { role: 'system', content: CLEANUP_PROMPT },
+          { role: 'system', content: FORMAT_PROMPT },
           { role: 'user', content: rawTranscript }
         ],
         max_tokens: 1024
@@ -131,7 +128,7 @@ STT CORRECTION RULES:
         return fixHungarianSpelling(text.trim().replace(/^"|"$/g, ''));
       }
     } catch (e) {
-      console.error(`Transcript cleanup error (${model}):`, e);
+      console.error(`Transcript formatting error (${model}):`, e);
     }
   }
 
@@ -324,7 +321,7 @@ app.post('/api/room/:roomId/audio', async (c) => {
       }, 400);
     }
 
-    // Step 1: Clean transcript with AI across any academic subject using optional topic context
+    // Step 1: Format transcript into clean sentences and paragraphs without rewriting words
     const cleanTranscript = await cleanTranscriptWithAI(c.env.AI, rawTranscript, topic);
 
     // Save active clean transcript to KV for "Generate More" feature
@@ -335,7 +332,7 @@ app.post('/api/room/:roomId/audio', async (c) => {
       }
     } catch (e) {}
 
-    // Step 2: Generate high quality Hungarian questions batch from the cleaned transcript
+    // Step 2: Generate high quality Hungarian questions batch from the formatted transcript
     let generatedQuestions = await generate5QuestionsWithAI(c.env.AI, cleanTranscript, topic);
 
     const savedQuestions = [];
