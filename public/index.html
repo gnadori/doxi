@@ -731,8 +731,8 @@
 
         let blobsToSend = recordedBlobs;
         if (recordedBlobs.length > 6) {
-          // Keep audio payload under 3MB (last 60s of recording) to prevent Cloudflare 3006 payload limit error
-          blobsToSend = recordedBlobs.slice(-6);
+          // Always preserve recordedBlobs[0] (WebM EBML container header) to prevent invalid WebM error 3010
+          blobsToSend = [recordedBlobs[0], ...recordedBlobs.slice(-6)];
         }
         const audioBlob = new Blob(blobsToSend, { type: 'audio/webm' });
         recordedBlobs = [];
