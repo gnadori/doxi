@@ -160,24 +160,73 @@
               <span>Kérdés-Jóváhagyási Sor</span>
               <span id="queueBadge" class="bg-amber-50 text-amber-700 text-xs px-2.5 py-0.5 rounded-full border border-amber-200 font-medium">0 függőben</span>
             </h3>
-            <button id="generateMoreBtn" class="py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 font-medium text-xs rounded-lg transition border border-slate-200">
-              Újabb 5 Kérdés Generálása
-            </button>
+            <div class="flex items-center gap-2">
+              <button id="toggleManualQuestionModalBtn" class="py-1.5 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-medium text-xs rounded-lg transition border border-indigo-200">
+                + Kézi Kérdés
+              </button>
+              <button id="generateMoreBtn" class="py-1.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-800 font-medium text-xs rounded-lg transition border border-slate-200">
+                Újabb 5 Kérdés
+              </button>
+            </div>
           </div>
 
           <!-- Collapsible Transcript Correction Accordion -->
-          <details id="transcriptCorrectionBanner" class="hidden mb-3 group bg-slate-50 border border-slate-200 rounded-xl text-xs overflow-hidden transition-all">
+          <details id="transcriptCorrectionBanner" open class="hidden mb-3 group bg-slate-50 border border-slate-200 rounded-xl text-xs overflow-hidden transition-all">
             <summary class="flex items-center justify-between p-2.5 bg-slate-100 hover:bg-slate-200/80 cursor-pointer select-none font-medium text-slate-800">
               <span class="flex items-center gap-2 font-semibold text-[11px]">
                 <span>Legutóbbi Beszédleirat (Google Engine)</span>
                 <span id="transcriptWordCount" class="font-mono text-[10px] text-slate-500"></span>
               </span>
-              <span class="text-[10px] text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-300">Megtekintés ▼</span>
+              <span class="text-[10px] text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-300">Részletek ▼</span>
             </summary>
-            <div class="p-3 border-t border-slate-200 bg-white">
+            <div id="transcriptScrollContainer" class="p-3 border-t border-slate-200 bg-white max-h-36 overflow-y-auto">
               <p id="cleanTranscriptText" class="text-slate-800 leading-relaxed font-sans text-xs whitespace-pre-wrap"></p>
             </div>
           </details>
+
+          <!-- Collapsible Manual Question Creation Form -->
+          <div id="manualQuestionFormContainer" class="hidden mb-3 p-4 bg-slate-50 border border-indigo-200 rounded-xl text-xs space-y-3 shadow-sm">
+            <div class="flex justify-between items-center border-b border-slate-200 pb-2">
+              <h4 class="font-bold text-slate-900 text-xs">Saját Kérdés Kézi Hozzáadása</h4>
+              <button id="closeManualFormBtn" class="text-slate-400 hover:text-slate-700 text-xs font-semibold">✕ Bezárás</button>
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-700 mb-1">Kérdés Szövege:</label>
+              <input type="text" id="manualQuestionTextInput" placeholder="Írd be a tesztkérdést..." class="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:border-indigo-600 focus:outline-none">
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-[10px] font-semibold text-slate-600 mb-0.5">A) Válasz:</label>
+                <input type="text" id="manualOptA" placeholder="A válaszlehetőség..." class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-slate-900 focus:border-indigo-600 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-[10px] font-semibold text-slate-600 mb-0.5">B) Válasz:</label>
+                <input type="text" id="manualOptB" placeholder="B válaszlehetőség..." class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-slate-900 focus:border-indigo-600 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-[10px] font-semibold text-slate-600 mb-0.5">C) Válasz:</label>
+                <input type="text" id="manualOptC" placeholder="C válaszlehetőség..." class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-slate-900 focus:border-indigo-600 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-[10px] font-semibold text-slate-600 mb-0.5">D) Válasz:</label>
+                <input type="text" id="manualOptD" placeholder="D válaszlehetőség..." class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1 text-xs text-slate-900 focus:border-indigo-600 focus:outline-none">
+              </div>
+            </div>
+            <div class="flex items-center justify-between pt-1">
+              <div class="flex items-center gap-2">
+                <span class="text-[11px] font-semibold text-slate-700">Helyes válasz:</span>
+                <select id="manualCorrectIndex" class="bg-white border border-slate-300 rounded-md px-2 py-1 text-xs font-semibold text-slate-800">
+                  <option value="0">A) válasz</option>
+                  <option value="1">B) válasz</option>
+                  <option value="2">C) válasz</option>
+                  <option value="3">D) válasz</option>
+                </select>
+              </div>
+              <button id="addManualQuestionBtn" class="py-1.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs rounded-lg transition shadow-sm">
+                Hozzáadás a Várólistához
+              </button>
+            </div>
+          </div>
 
           <div id="pendingQuestionsList" class="flex-1 overflow-y-auto space-y-4 pr-1">
             <!-- Empty State -->
@@ -868,14 +917,68 @@
       const banner = document.getElementById('transcriptCorrectionBanner');
       const textElem = document.getElementById('cleanTranscriptText');
       const countElem = document.getElementById('transcriptWordCount');
+      const container = document.getElementById('transcriptScrollContainer');
       if (banner && textElem) {
         textElem.textContent = text;
         if (countElem) {
           countElem.textContent = title ? `${title} (${text.split(/\s+/).length} szó)` : `${text.split(/\s+/).length} szó`;
         }
         banner.classList.remove('hidden');
+        banner.open = true;
+        if (container) {
+          container.scrollTop = container.scrollHeight;
+        }
       }
     }
+
+    // Manual Question Form Logic
+    document.getElementById('toggleManualQuestionModalBtn').addEventListener('click', () => {
+      const form = document.getElementById('manualQuestionFormContainer');
+      form.classList.toggle('hidden');
+    });
+
+    document.getElementById('closeManualFormBtn').addEventListener('click', () => {
+      document.getElementById('manualQuestionFormContainer').classList.add('hidden');
+    });
+
+    document.getElementById('addManualQuestionBtn').addEventListener('click', () => {
+      const textInput = document.getElementById('manualQuestionTextInput');
+      const optA = document.getElementById('manualOptA');
+      const optB = document.getElementById('manualOptB');
+      const optC = document.getElementById('manualOptC');
+      const optD = document.getElementById('manualOptD');
+      const correctSelect = document.getElementById('manualCorrectIndex');
+
+      const text = textInput.value.trim();
+      const a = optA.value.trim();
+      const b = optB.value.trim();
+      const c = optC.value.trim();
+      const d = optD.value.trim();
+
+      if (!text || !a || !b || !c || !d) {
+        alert('Kérjük töltsd ki a kérdés szövegét és mind a 4 válaszlehetőséget!');
+        return;
+      }
+
+      const manualQ = {
+        id: `q_${Date.now()}_manual_${Math.random().toString(36).substring(2, 6)}`,
+        text,
+        options: [a, b, c, d],
+        correctIndex: parseInt(correctSelect.value, 10),
+        explanation: 'Tanár által kézzel hozzáadott kérdés.',
+        approved: false,
+        timestamp: Date.now()
+      };
+
+      addQuestionToPendingQueue(manualQ);
+
+      textInput.value = '';
+      optA.value = '';
+      optB.value = '';
+      optC.value = '';
+      optD.value = '';
+      document.getElementById('manualQuestionFormContainer').classList.add('hidden');
+    });
 
     // Generate 5 More Questions Button
     document.getElementById('generateMoreBtn').addEventListener('click', async () => {
