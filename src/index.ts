@@ -96,8 +96,20 @@ app.post('/api/room/:roomId/audio', async (c) => {
   if (contentType.includes('multipart/form-data')) {
     const body = await c.req.parseBody();
     const file = body['audio'];
-    if (file && file instanceof File) {
+    if (file && typeof (file as any).arrayBuffer === 'function') {
+      audioBuffer = await (file as any).arrayBuffer();
+    } else if (file && file instanceof Blob) {
       audioBuffer = await file.arrayBuffer();
+    } else if (typeof file === 'string') {
+      if (file.startsWith('data:')) {
+        const base64Data = file.split(',')[1] || '';
+        const binaryStr = atob(base64Data);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
+        audioBuffer = bytes.buffer;
+      }
     }
     if (typeof body['text'] === 'string') {
       textSample = body['text'];
@@ -111,18 +123,30 @@ app.post('/api/room/:roomId/audio', async (c) => {
   if (textSample) {
     transcript = textSample;
   } else if (audioBuffer && audioBuffer.byteLength > 0) {
-    try {
-      const audioArray = Array.from(new Uint8Array(audioBuffer));
-      const whisperRes = await c.env.AI.run(
-        '@cf/openai/whisper-large-v3-turbo',
-        {
-          audio: audioArray,
-        }
-      );
-      transcript = whisperRes?.text || whisperRes?.transcript || '';
-    } catch (err: any) {
-      console.error('Whisper AI error:', err);
-      return c.json({ error: 'Failed to transcribe audio with Whisper AI', details: err.message }, 500);
+    const uint8Array = new Uint8Array(audioBuffer);
+    const numberArray = Array.from(uint8Array);
+
+    const whisperModels = [
+      '@cf/openai/whisper-large-v3-turbo',
+      '@cf/openai/whisper'
+    ];
+
+    let whisperErr = '';
+    for (const model of whisperModels) {
+      try {
+        const whisperRes = await c.env.AI.run(model, {
+          audio: numberArray,
+        });
+        transcript = whisperRes?.text || whisperRes?.transcript || '';
+        if (transcript) break;
+      } catch (err: any) {
+        console.error(`Whisper error with model ${model}:`, err);
+        whisperErr = err.message || String(err);
+      }
+    }
+
+    if (!transcript && whisperErr) {
+      return c.json({ error: 'Failed to transcribe audio with Whisper AI', details: whisperErr }, 500);
     }
   } else {
     return c.json({ error: 'No audio or text content provided' }, 400);
