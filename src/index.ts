@@ -114,15 +114,24 @@ app.post('/api/room/:roomId/audio', async (c) => {
     return c.json({ error: 'Empty transcript received' }, 400);
   }
 
-  const SYSTEM_PROMPT = `You are an expert pedagogical assistant. Analyze the provided transcript chunk from a lecture.
-CRITICAL: You MUST respond ONLY with a valid JSON object matching this structure:
+  const SYSTEM_PROMPT = `You are an expert pedagogical assistant. Analyze the provided transcript chunk from a lecture and generate 1 or 2 multiple-choice comprehension check questions.
+
+CRITICAL INSTRUCTIONS:
+- You MUST generate 4 distinct, plausible answer choices derived directly from the lecture transcript for each question (1 correct answer and 3 realistic distractors).
+- NEVER use generic placeholder strings like "Option A", "Option B", "Option C", "Option D". Always write real, informative answer choices!
+- Respond ONLY with a valid JSON object matching this exact structure:
 {
   "questions": [
     {
-      "text": "Question string",
-      "options": ["Option A", "Option B", "Option C", "Option D"],
-      "correctIndex": 0,
-      "explanation": "Brief explanation"
+      "text": "What is the main function of mitochondria in eukaryotic cells?",
+      "options": [
+        "Synthesizing nuclear DNA",
+        "Generating ATP energy through cellular respiration",
+        "Storing calcium ions in muscles",
+        "Transporting proteins to the Golgi apparatus"
+      ],
+      "correctIndex": 1,
+      "explanation": "Mitochondria produce ATP, which powers cellular processes."
     }
   ]
 }`;
@@ -187,7 +196,14 @@ CRITICAL: You MUST respond ONLY with a valid JSON object matching this structure
     const questionObj = {
       id: questionId,
       text: q.text || 'Sample comprehension check?',
-      options: Array.isArray(q.options) && q.options.length === 4 ? q.options : ['Option A', 'Option B', 'Option C', 'Option D'],
+      options: Array.isArray(q.options) && q.options.length === 4 && !q.options.some((o: string) => /^option [a-d]$/i.test(o.trim()))
+        ? q.options 
+        : [
+            q.options?.[0] || 'First key statement from lecture',
+            q.options?.[1] || 'Alternative hypothesis',
+            q.options?.[2] || 'Contrary scientific opinion',
+            q.options?.[3] || 'None of the above'
+          ],
       correctIndex: typeof q.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex < 4 ? q.correctIndex : 0,
       explanation: q.explanation || 'Based on lecture content.',
       approved: false,
