@@ -135,21 +135,104 @@ RULES:
   return fixHungarianSpelling(rawTranscript);
 }
 
-// Helper to generate universal high-quality multiple choice questions in Hungarian strictly from transcript
+// STEP 1: Analyze lecture transcript to extract topic, main thesis, key concepts, and specific details
+async function analyzeLectureWithAI(ai: any, cleanTranscript: string, topic?: string): Promise<{ mainTopic: string; mainThesis: string; keyConcepts: string[]; specificDetails: string[] }> {
+  const ANALYSIS_PROMPT = `You are an expert academic analyst analyzing a spoken lecture transcript in Hungarian.
+${topic ? `\nKNOWN LECTURE SUBJECT: "${topic}"` : ''}
+
+Your ONLY task is to extract 4 structural elements from the lecture transcript:
+1. "mainTopic": The core topic discussed (1 concise sentence in Hungarian).
+2. "mainThesis": The main argument or thesis statement of the lecturer (1 clear sentence in Hungarian).
+3. "keyConcepts": An array of 2 to 4 key technical terms, named concepts, or definitions explicitly mentioned in the text.
+4. "specificDetails": An array of 2 to 3 specific factual claims or details mentioned in the text.
+
+OUTPUT FORMAT: Output ONLY valid JSON matching this exact structure:
+{
+  "mainTopic": "...",
+  "mainThesis": "...",
+  "keyConcepts": ["Concept A", "Concept B"],
+  "specificDetails": ["Detail A", "Detail B"]
+}`;
+
+  const models = [
+    '@cf/qwen/qwen1.5-14b-chat',
+    '@cf/qwen/qwen1.5-7b-chat',
+    '@cf/mistral/mistral-7b-instruct-v0.2',
+    '@cf/meta/llama-3.2-3b-instruct'
+  ];
+
+  for (const model of models) {
+    try {
+      const res = await ai.run(model, {
+        messages: [
+          { role: 'system', content: ANALYSIS_PROMPT },
+          { role: 'user', content: `Előadás leirata:\n"${cleanTranscript}"` }
+        ],
+        max_tokens: 1024
+      });
+
+      let rawText = '';
+      if (typeof res === 'string') rawText = res;
+      else if (res && typeof res.response === 'string') rawText = res.response;
+
+      if (rawText.trim()) {
+        rawText = rawText.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+        rawText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+        const parsed = JSON.parse(rawText);
+        if (parsed.mainTopic && parsed.mainThesis) {
+          return {
+            mainTopic: fixHungarianSpelling(parsed.mainTopic),
+            mainThesis: fixHungarianSpelling(parsed.mainThesis),
+            keyConcepts: Array.isArray(parsed.keyConcepts) ? parsed.keyConcepts.map((c: string) => fixHungarianSpelling(c)) : [],
+            specificDetails: Array.isArray(parsed.specificDetails) ? parsed.specificDetails.map((d: string) => fixHungarianSpelling(d)) : []
+          };
+        }
+      }
+    } catch (e) {
+      console.error(`Lecture analysis model error (${model}):`, e);
+    }
+  }
+
+  const sentences = cleanTranscript.split(/[.!?]+/).map(s => s.trim()).filter(Boolean);
+  return {
+    mainTopic: topic || sentences[0] || cleanTranscript.substring(0, 80),
+    mainThesis: sentences[1] || sentences[0] || 'Az előadás legfőbb megállapításai.',
+    keyConcepts: [sentences[0]?.substring(0, 40) || 'Kulcsfogalom A', sentences[1]?.substring(0, 40) || 'Kulcsfogalom B'],
+    specificDetails: [sentences[2]?.substring(0, 50) || 'Konkrét megállapítás']
+  };
+}
+
+// STEP 2: Generate 5 targeted multiple choice questions strictly based on Step 1 Lecture Analysis
 async function generate5QuestionsWithAI(ai: any, cleanTranscript: string, topic?: string): Promise<any[]> {
-  const QUIZ_GEN_PROMPT = `You are a university professor designing a 5-question multiple-choice comprehension quiz in Hungarian based STRICTLY on the provided lecture transcript.
-${topic ? `\nLECTURE TOPIC / SUBJECT: "${topic}"` : ''}
+  // Step 1: Execute deep lecture analysis first
+  const analysis = await analyzeLectureWithAI(ai, cleanTranscript, topic);
 
-STRICT 5-QUESTION DIVERSITY RULES (EACH OF THE 5 QUESTIONS MUST BE UNIQUE AND TEST DIFFERENT ASPECTS):
+  const QUIZ_GEN_PROMPT = `You are a university professor creating a 5-question comprehension quiz in Hungarian based on the following extracted lecture analysis:
 
-- Question 1 Text MUST BE: "Miről volt eddig szó az előadásrészlet alapján?" (Overview topic).
-- Question 2 Text MUST BE: "Mi az elhangzott előadásrészlet legfőbb tézise?" (Main thesis).
-- Question 3 Text MUST test Concept #1 (e.g. "Melyik szakkifejezés írja le...").
-- Question 4 Text MUST test Concept #2 or a key event (e.g. "Mi a szerepe a leiratban említett alábbi tényezőnek...").
-- Question 5 Text MUST test a specific detail, fact, date, or statement (e.g. "Melyik konkrét megállapítás hangzott el...").
+EXTRACTED LECTURE ANALYSIS:
+- Main Topic: "${analysis.mainTopic}"
+- Central Thesis: "${analysis.mainThesis}"
+- Key Concepts: ${JSON.stringify(analysis.keyConcepts)}
+- Specific Details: ${JSON.stringify(analysis.specificDetails)}
 
-CRITICAL DEDUPLICATION REQUIREMENT:
-- EVERY QUESTION TEXT MUST BE COMPLETELY DIFFERENT. NEVER repeat the same question phrasing or concept across multiple questions.
+ORIGINAL LECTURE TRANSCRIPT:
+"${cleanTranscript}"
+
+STRICT 5-QUESTION STRUCTURE RULES:
+1. Question 1 Text MUST BE: "Miről volt eddig szó az előadásrészlet alapján?"
+   - Correct Option (Index 0): Accurately states Main Topic ("${analysis.mainTopic}").
+2. Question 2 Text MUST BE: "Mi az elhangzott előadásrészlet legfőbb tézise?"
+   - Correct Option (Index 0): Accurately states Central Thesis ("${analysis.mainThesis}").
+3. Question 3 Text MUST test Concept #1 (${analysis.keyConcepts[0] || 'az első kulcsfogalom'}).
+   - e.g. "Melyik szakkifejezés írja le az előadásban tárgyalt..."
+4. Question 4 Text MUST test Concept #2 or relationship (${analysis.keyConcepts[1] || 'a második kulcsfogalom'}).
+   - e.g. "Mi a szerepe az előadásban említett alábbi tényezőnek..."
+5. Question 5 Text MUST test a specific detail (${analysis.specificDetails[0] || 'a megállapított tény'}).
+   - e.g. "Melyik konkrét megállapítás hangzott el az előadásban?"
+
+RULES:
+- Correct options (index 0) MUST be truthful and directly derived from the analysis.
+- Distractor options (indices 1, 2, 3) MUST be plausible-sounding incorrect alternatives from the SAME academic domain.
 - Output ONLY valid JSON matching this exact structure:
 {
   "questions": [
@@ -225,7 +308,6 @@ CRITICAL DEDUPLICATION REQUIREMENT:
             if (q.text && Array.isArray(q.options) && q.options.length === 4) {
               const cleanText = q.text.trim();
               const prefix = cleanText.toLowerCase().substring(0, 20);
-              // Strict deduplication: check exact text or 20-character prefix match
               const isDuplicate = questions.some((ex: any) => 
                 ex.text === cleanText || (prefix.length > 8 && ex.text.toLowerCase().substring(0, 20) === prefix)
               );
